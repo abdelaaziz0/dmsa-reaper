@@ -1,0 +1,58 @@
+{
+  "schema": "dmsa-reaper-adbuilder-contract/v1",
+  "lab": "dmsalab.local",
+  "expected-badsuccessor-paths": [
+    {
+      "id": "P-0001",
+      "primitive": "postpatch-mutual-pair",
+      "container_dn_contains": "OU=DMSA-Direct",
+      "target_dn_contains": "CN=victim.postpatch",
+      "executable": true,
+      "requires_proof": "kerberos-dmsa-proof"
+    }
+  ],
+  "negative-controls": [
+    {
+      "name": "wrong-object-specific-guid",
+      "expected": "no executable CreateChild:dMSA path"
+    },
+    {
+      "name": "genericwrite-container",
+      "expected": "GenericWrite does not imply CreateChild:dMSA"
+    },
+    {
+      "name": "legacy-only",
+      "expected": "legacy paths require explicit legacy flag and do not prove patched KDC behavior"
+    }
+  ],
+  "expected-ouroboros-assessment": {
+    "native_secret_extraction_implemented": false,
+    "base_kerberos_proof_sets_external_verified": false,
+    "dmsa_proof_required": true,
+    "accepted_statuses": [
+      "capable",
+      "partially-capable",
+      "blocked",
+      "unknown"
+    ]
+  },
+  "reporting": {
+    "must_include": [
+      "operation_id",
+      "modified LDAP attributes",
+      "created dMSA objects",
+      "rollback status",
+      "LDAP verification status",
+      "external proof status"
+    ],
+    "must_not_include": [
+      "passwords",
+      "NT hashes",
+      "AES keys",
+      "raw tickets",
+      "private keys",
+      "session keys",
+      "base64 ticket blobs"
+    ]
+  }
+}

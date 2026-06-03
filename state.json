@@ -1,0 +1,2381 @@
+{
+  "environment": {
+    "domain": "dmsalab.local",
+    "forest": null,
+    "default_nc": "DC=dmsalab,DC=local",
+    "config_nc": "CN=Configuration,DC=dmsalab,DC=local",
+    "schema_nc": "CN=Schema,CN=Configuration,DC=dmsalab,DC=local",
+    "dmsa_schema_status": "present",
+    "server_2025_dc_status": "present",
+    "kds_root_key_status": "present",
+    "dmsa_capable_status": "present",
+    "ldap_signing_status": "unknown",
+    "ldaps_status": "unknown",
+    "channel_binding_status": "unknown",
+    "has_dmsa_schema": true,
+    "has_server_2025_dc": true,
+    "has_kds_root_key": true,
+    "dmsa_capable": true,
+    "dcs": [
+      {
+        "dnsHostName": "DMSA.dmsalab.local",
+        "operatingSystem": "Windows Server 2025 Standard",
+        "operatingSystemVersion": "10.0 (26100)",
+        "isServer2025": true
+      }
+    ]
+  },
+  "schema_cache": {
+    "schema_nc": "CN=Schema,CN=Configuration,DC=dmsalab,DC=local",
+    "config_nc": "CN=Configuration,DC=dmsalab,DC=local",
+    "object_version": 91,
+    "dmsa_class_guid": "0feb936f-47b3-49f2-9386-1dedc2c23765",
+    "dmsa_class_guid_source": "schema_query",
+    "attr_guids": {
+      "msDS-DelegatedMSAState": "2f5c138a-bd38-4016-88b4-0ec87cbb4919",
+      "msDS-ManagedAccountPrecededByLink": "a0945b2b-57a2-43bd-b327-4d112a4e8bd1",
+      "msDS-SupersededManagedAccountLink": "3752e002-43be-48c8-b3ca-2cb2fffbc8a1",
+      "msDS-SupersededManagedAccountLinkBL": "fa05730a-9efd-4bba-a4a6-1c9e54ef57d5",
+      "msDS-SupersededServiceAccountState": "a4693096-a4c3-4ecd-b8cb-73cd6398b7a2",
+      "msDS-GroupMSAMembership": "888eedd6-ce04-df40-b462-b8a50e41ba38",
+      "msDS-KeyCredentialLink": "5b47d60f-6090-40b2-9f37-2a4de88f3063"
+    },
+    "attr_guid_sources": {
+      "msDS-DelegatedMSAState": "schema_query",
+      "msDS-ManagedAccountPrecededByLink": "schema_query",
+      "msDS-SupersededManagedAccountLink": "schema_query",
+      "msDS-SupersededManagedAccountLinkBL": "schema_query",
+      "msDS-SupersededServiceAccountState": "schema_query",
+      "msDS-GroupMSAMembership": "schema_query",
+      "msDS-KeyCredentialLink": "schema_query"
+    },
+    "search_flags": {
+      "msDS-DelegatedMSAState": 0,
+      "msDS-ManagedAccountPrecededByLink": 0,
+      "msDS-SupersededManagedAccountLink": 0,
+      "msDS-SupersededManagedAccountLinkBL": 0,
+      "msDS-SupersededServiceAccountState": 0,
+      "msDS-GroupMSAMembership": 0,
+      "msDS-KeyCredentialLink": 0
+    },
+    "confidential_attrs": []
+  },
+  "current_principal": {
+    "name": "reaper.low",
+    "sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+    "groups": [
+      "S-1-5-21-605709967-1798081244-1819099823-1104",
+      "S-1-5-21-605709967-1798081244-1819099823-513"
+    ]
+  },
+  "dmsas": [],
+  "containers": [
+    {
+      "dn": "CN=Users,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=Users,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=Computers,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=Computers,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=ForeignSecurityPrincipals,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=ForeignSecurityPrincipals,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=Program Data,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=Program Data,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=Microsoft,CN=Program Data,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=Microsoft,CN=Program Data,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=Managed Service Accounts,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=Managed Service Accounts,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=WinsockServices,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=WinsockServices,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=RpcServices,CN=System,DC=dmsalab,DC=local",
+      "object_class": "rpcContainer",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=RpcServices,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=Meetings,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=Meetings,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=Policies,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=Policies,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN={31B2F340-016D-11D2-945F-00C04FB984F9},CN=Policies,CN=System,DC=dmsalab,DC=local",
+      "object_class": "groupPolicyContainer",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN={31B2F340-016D-11D2-945F-00C04FB984F9},CN=Policies,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=User,CN={31B2F340-016D-11D2-945F-00C04FB984F9},CN=Policies,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=User,CN={31B2F340-016D-11D2-945F-00C04FB984F9},CN=Policies,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=Machine,CN={31B2F340-016D-11D2-945F-00C04FB984F9},CN=Policies,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=Machine,CN={31B2F340-016D-11D2-945F-00C04FB984F9},CN=Policies,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN={6AC1786C-016F-11D2-945F-00C04fB984F9},CN=Policies,CN=System,DC=dmsalab,DC=local",
+      "object_class": "groupPolicyContainer",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN={6AC1786C-016F-11D2-945F-00C04fB984F9},CN=Policies,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=User,CN={6AC1786C-016F-11D2-945F-00C04fB984F9},CN=Policies,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=User,CN={6AC1786C-016F-11D2-945F-00C04fB984F9},CN=Policies,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=Machine,CN={6AC1786C-016F-11D2-945F-00C04fB984F9},CN=Policies,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=Machine,CN={6AC1786C-016F-11D2-945F-00C04fB984F9},CN=Policies,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=RAS and IAS Servers Access Check,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=AdminSDHolder,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=AdminSDHolder,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=ComPartitions,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=ComPartitions,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=ComPartitionSets,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=ComPartitionSets,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=WMIPolicy,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=WMIPolicy,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=PolicyTemplate,CN=WMIPolicy,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=PolicyTemplate,CN=WMIPolicy,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=SOM,CN=WMIPolicy,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=SOM,CN=WMIPolicy,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=PolicyType,CN=WMIPolicy,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=PolicyType,CN=WMIPolicy,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=WMIGPO,CN=WMIPolicy,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=WMIGPO,CN=WMIPolicy,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=ab402345-d3c3-455d-9ff7-40268a1099b6,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=ab402345-d3c3-455d-9ff7-40268a1099b6,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=bab5f54d-06c8-48de-9b87-d78b796564e4,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=bab5f54d-06c8-48de-9b87-d78b796564e4,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=f3dd09dd-25e8-4f9c-85df-12d6d2f2f2f5,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=f3dd09dd-25e8-4f9c-85df-12d6d2f2f2f5,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=2416c60a-fe15-4d7a-a61e-dffd5df864d3,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=2416c60a-fe15-4d7a-a61e-dffd5df864d3,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=7868d4c8-ac41-4e05-b401-776280e8e9f1,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=7868d4c8-ac41-4e05-b401-776280e8e9f1,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=860c36ed-5241-4c62-a18b-cf6ff9994173,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=860c36ed-5241-4c62-a18b-cf6ff9994173,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=0e660ea3-8a5e-4495-9ad7-ca1bd4638f9e,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=0e660ea3-8a5e-4495-9ad7-ca1bd4638f9e,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=a86fe12a-0f62-4e2a-b271-d27f601f8182,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=a86fe12a-0f62-4e2a-b271-d27f601f8182,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=d85c0bfd-094f-4cad-a2b5-82ac9268475d,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=d85c0bfd-094f-4cad-a2b5-82ac9268475d,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=6ada9ff7-c9df-45c1-908e-9fef2fab008a,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=6ada9ff7-c9df-45c1-908e-9fef2fab008a,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=10b3ad2a-6883-4fa7-90fc-6377cbdc1b26,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=10b3ad2a-6883-4fa7-90fc-6377cbdc1b26,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=98de1d3e-6611-443b-8b4e-f4337f1ded0b,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=98de1d3e-6611-443b-8b4e-f4337f1ded0b,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=f607fd87-80cf-45e2-890b-6cf97ec0e284,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=f607fd87-80cf-45e2-890b-6cf97ec0e284,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=9cac1f66-2167-47ad-a472-2a13251310e4,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=9cac1f66-2167-47ad-a472-2a13251310e4,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=6ff880d6-11e7-4ed1-a20f-aac45da48650,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=6ff880d6-11e7-4ed1-a20f-aac45da48650,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=446f24ea-cfd5-4c52-8346-96e170bcb912,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=446f24ea-cfd5-4c52-8346-96e170bcb912,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=51cba88b-99cf-4e16-bef2-c427b38d0767,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=51cba88b-99cf-4e16-bef2-c427b38d0767,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=a3dac986-80e7-4e59-a059-54cb1ab43cb9,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=a3dac986-80e7-4e59-a059-54cb1ab43cb9,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=293f0798-ea5c-4455-9f5d-45f33a30703b,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=293f0798-ea5c-4455-9f5d-45f33a30703b,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=5c82b233-75fc-41b3-ac71-c69592e6bf15,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=5c82b233-75fc-41b3-ac71-c69592e6bf15,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=7ffef925-405b-440a-8d58-35e8cd6e98c3,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=7ffef925-405b-440a-8d58-35e8cd6e98c3,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=4dfbb973-8a62-4310-a90c-776e00f83222,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=4dfbb973-8a62-4310-a90c-776e00f83222,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=8437C3D8-7689-4200-BF38-79E4AC33DFA0,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=8437C3D8-7689-4200-BF38-79E4AC33DFA0,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=7cfb016c-4f87-4406-8166-bd9df943947f,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=7cfb016c-4f87-4406-8166-bd9df943947f,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=f7ed4553-d82b-49ef-a839-2f38a36bb069,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=f7ed4553-d82b-49ef-a839-2f38a36bb069,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=8ca38317-13a4-4bd4-806f-ebed6acb5d0c,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=8ca38317-13a4-4bd4-806f-ebed6acb5d0c,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=3c784009-1f57-4e2a-9b04-6915c9e71961,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=3c784009-1f57-4e2a-9b04-6915c9e71961,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=6bcd5678-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=6bcd5678-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=6bcd5679-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=6bcd5679-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=6bcd567a-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=6bcd567a-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=6bcd567b-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=6bcd567b-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=6bcd567c-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=6bcd567c-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=6bcd567d-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=6bcd567d-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=6bcd567e-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=6bcd567e-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=6bcd567f-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=6bcd567f-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=6bcd5680-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=6bcd5680-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=6bcd5681-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=6bcd5681-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=6bcd5682-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=6bcd5682-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=6bcd5683-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=6bcd5683-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=6bcd5684-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=6bcd5684-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=6bcd5685-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=6bcd5685-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=6bcd5686-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=6bcd5686-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=6bcd5687-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=6bcd5687-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=6bcd5688-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=6bcd5688-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=6bcd5689-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=6bcd5689-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=6bcd568a-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=6bcd568a-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=6bcd568b-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=6bcd568b-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=6bcd568c-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=6bcd568c-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=6bcd568d-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=6bcd568d-8314-11d6-977b-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=3051c66f-b332-4a73-9a20-2d6a7d6e6a1c,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=3051c66f-b332-4a73-9a20-2d6a7d6e6a1c,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=3e4f4182-ac5d-4378-b760-0eab2de593e2,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=3e4f4182-ac5d-4378-b760-0eab2de593e2,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=c4f17608-e611-11d6-9793-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=c4f17608-e611-11d6-9793-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=13d15cf0-e6c8-11d6-9793-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=13d15cf0-e6c8-11d6-9793-00c04f613221,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=8ddf6913-1c7b-4c59-a5af-b9ca3b3d2c4c,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=8ddf6913-1c7b-4c59-a5af-b9ca3b3d2c4c,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=dda1d01d-4bd7-4c49-a184-46f9241b560e,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=dda1d01d-4bd7-4c49-a184-46f9241b560e,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=a1789bfb-e0a2-4739-8cc0-e77d892d080a,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=a1789bfb-e0a2-4739-8cc0-e77d892d080a,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=61b34cb0-55ee-4be9-b595-97810b92b017,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=61b34cb0-55ee-4be9-b595-97810b92b017,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=57428d75-bef7-43e1-938b-2e749f5a8d56,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=57428d75-bef7-43e1-938b-2e749f5a8d56,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=ebad865a-d649-416f-9922-456b53bbb5b8,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=ebad865a-d649-416f-9922-456b53bbb5b8,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=0b7fb422-3609-4587-8c2e-94b10f67d1bf,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=0b7fb422-3609-4587-8c2e-94b10f67d1bf,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=2951353e-d102-4ea5-906c-54247eeec741,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=2951353e-d102-4ea5-906c-54247eeec741,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=71482d49-8870-4cb3-a438-b6fc9ec35d70,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=71482d49-8870-4cb3-a438-b6fc9ec35d70,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=aed72870-bf16-4788-8ac7-22299c8207f1,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=aed72870-bf16-4788-8ac7-22299c8207f1,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=f58300d1-b71a-4DB6-88a1-a8b9538beaca,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=f58300d1-b71a-4DB6-88a1-a8b9538beaca,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=231fb90b-c92a-40c9-9379-bacfc313a3e3,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=231fb90b-c92a-40c9-9379-bacfc313a3e3,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=4aaabc3a-c416-4b9c-a6bb-4b453ab1c1f0,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=4aaabc3a-c416-4b9c-a6bb-4b453ab1c1f0,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=9738c400-7795-4d6e-b19d-c16cd6486166,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=9738c400-7795-4d6e-b19d-c16cd6486166,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=de10d491-909f-4fb0-9abb-4b7865c0fe80,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=de10d491-909f-4fb0-9abb-4b7865c0fe80,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=b96ed344-545a-4172-aa0c-68118202f125,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=b96ed344-545a-4172-aa0c-68118202f125,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=4c93ad42-178a-4275-8600-16811d28f3aa,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=4c93ad42-178a-4275-8600-16811d28f3aa,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=c88227bc-fcca-4b58-8d8a-cd3d64528a02,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=c88227bc-fcca-4b58-8d8a-cd3d64528a02,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=5e1574f6-55df-493e-a671-aaeffca6a100,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=5e1574f6-55df-493e-a671-aaeffca6a100,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=d262aae8-41f7-48ed-9f35-56bbb677573d,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=d262aae8-41f7-48ed-9f35-56bbb677573d,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=82112ba0-7e4c-4a44-89d9-d46c9612bf91,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=82112ba0-7e4c-4a44-89d9-d46c9612bf91,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=c3c927a6-cc1d-47c0-966b-be8f9b63d991,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=c3c927a6-cc1d-47c0-966b-be8f9b63d991,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=54afcfb9-637a-4251-9f47-4d50e7021211,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=54afcfb9-637a-4251-9f47-4d50e7021211,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=f4728883-84dd-483c-9897-274f2ebcf11e,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=f4728883-84dd-483c-9897-274f2ebcf11e,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=ff4f9d27-7157-4cb0-80a9-5d6f2b14c8ff,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=ff4f9d27-7157-4cb0-80a9-5d6f2b14c8ff,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=83C53DA7-427E-47A4-A07A-A324598B88F7,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=83C53DA7-427E-47A4-A07A-A324598B88F7,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=C81FC9CC-0130-4FD1-B272-634D74818133,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=C81FC9CC-0130-4FD1-B272-634D74818133,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=E5F9E791-D96D-4FC9-93C9-D53E1DC439BA,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=E5F9E791-D96D-4FC9-93C9-D53E1DC439BA,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=e6d5fd00-385d-4e65-b02d-9da3493ed850,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=e6d5fd00-385d-4e65-b02d-9da3493ed850,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=3a6b3fbf-3168-4312-a10d-dd5b3393952d,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=3a6b3fbf-3168-4312-a10d-dd5b3393952d,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=7F950403-0AB3-47F9-9730-5D7B0269F9BD,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=7F950403-0AB3-47F9-9730-5D7B0269F9BD,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=434bb40d-dbc9-4fe7-81d4-d57229f7b080,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=434bb40d-dbc9-4fe7-81d4-d57229f7b080,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=A0C238BA-9E30-4EE6-80A6-43F731E9A5CD,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=A0C238BA-9E30-4EE6-80A6-43F731E9A5CD,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=Windows2003Update,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=Windows2003Update,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=ActiveDirectoryUpdate,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=ActiveDirectoryUpdate,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=PSPs,CN=System,DC=dmsalab,DC=local",
+      "object_class": "msImaging-PSPs",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=PSPs,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=6E157EDF-4E72-4052-A82A-EC3F91021A22,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+      "object_class": "container",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=6E157EDF-4E72-4052-A82A-EC3F91021A22,CN=Operations,CN=DomainUpdates,CN=System,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "OU=Domain Controllers,DC=dmsalab,DC=local",
+      "object_class": "organizationalUnit",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "OU=Domain Controllers,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "OU=Reaper,DC=dmsalab,DC=local",
+      "object_class": "organizationalUnit",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-1000",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "OU=Reaper,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "OU=Users,OU=Reaper,DC=dmsalab,DC=local",
+      "object_class": "organizationalUnit",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-1000",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "OU=Users,OU=Reaper,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "OU=Groups,OU=Reaper,DC=dmsalab,DC=local",
+      "object_class": "organizationalUnit",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-1000",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "OU=Groups,OU=Reaper,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "OU=Targets,OU=Reaper,DC=dmsalab,DC=local",
+      "object_class": "organizationalUnit",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-1000",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "OU=Targets,OU=Reaper,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "OU=DMSACreate,OU=Reaper,DC=dmsalab,DC=local",
+      "object_class": "organizationalUnit",
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-1000",
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "OU=DMSACreate,OU=Reaper,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        },
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "CreateChild:dMSA",
+          "object_dn": "OU=DMSACreate,OU=Reaper,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": "0feb936f-47b3-49f2-9386-1dedc2c23765",
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    }
+  ],
+  "targets": [
+    {
+      "dn": "CN=Administrateur,CN=Users,DC=dmsalab,DC=local",
+      "sam": "Administrateur",
+      "sid": "S-1-5-21-605709967-1798081244-1819099823-500",
+      "object_classes": [
+        "top",
+        "person",
+        "organizationalPerson",
+        "user"
+      ],
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "writable_attrs": [],
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=Administrateur,CN=Users,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=Invité,CN=Users,DC=dmsalab,DC=local",
+      "sam": "Invité",
+      "sid": "S-1-5-21-605709967-1798081244-1819099823-501",
+      "object_classes": [
+        "top",
+        "person",
+        "organizationalPerson",
+        "user"
+      ],
+      "owner_sid": "S-1-5-32-544",
+      "writable_attrs": [],
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=Invité,CN=Users,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=vboxuser,CN=Users,DC=dmsalab,DC=local",
+      "sam": "vboxuser",
+      "sid": "S-1-5-21-605709967-1798081244-1819099823-1000",
+      "object_classes": [
+        "top",
+        "person",
+        "organizationalPerson",
+        "user"
+      ],
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "writable_attrs": [],
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=vboxuser,CN=Users,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=DMSA,OU=Domain Controllers,DC=dmsalab,DC=local",
+      "sam": "DMSA$",
+      "sid": "S-1-5-21-605709967-1798081244-1819099823-1001",
+      "object_classes": [
+        "top",
+        "person",
+        "organizationalPerson",
+        "user",
+        "computer"
+      ],
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "writable_attrs": [],
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=DMSA,OU=Domain Controllers,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=krbtgt,CN=Users,DC=dmsalab,DC=local",
+      "sam": "krbtgt",
+      "sid": "S-1-5-21-605709967-1798081244-1819099823-502",
+      "object_classes": [
+        "top",
+        "person",
+        "organizationalPerson",
+        "user"
+      ],
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-512",
+      "writable_attrs": [],
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=krbtgt,CN=Users,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=Reaper Low-Privilege Operator,OU=Users,OU=Reaper,DC=dmsalab,DC=local",
+      "sam": "reaper.low",
+      "sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+      "object_classes": [
+        "top",
+        "person",
+        "organizationalPerson",
+        "user"
+      ],
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-1000",
+      "writable_attrs": [],
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=Reaper Low-Privilege Operator,OU=Users,OU=Reaper,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "dn": "CN=target.migrate,OU=Targets,OU=Reaper,DC=dmsalab,DC=local",
+      "sam": "target.migrate",
+      "sid": "S-1-5-21-605709967-1798081244-1819099823-1107",
+      "object_classes": [
+        "top",
+        "person",
+        "organizationalPerson",
+        "user"
+      ],
+      "owner_sid": "S-1-5-21-605709967-1798081244-1819099823-1000",
+      "writable_attrs": [
+        "msDS-SupersededManagedAccountLink",
+        "msDS-SupersededServiceAccountState"
+      ],
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "ReadControl",
+          "object_dn": "CN=target.migrate,OU=Targets,OU=Reaper,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        },
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "WriteProperty:msDS-SupersededManagedAccountLink",
+          "object_dn": "CN=target.migrate,OU=Targets,OU=Reaper,DC=dmsalab,DC=local",
+          "attribute": "msDS-SupersededManagedAccountLink",
+          "object_type_guid": "3752e002-43be-48c8-b3ca-2cb2fffbc8a1",
+          "inherited": false,
+          "source": null
+        },
+        {
+          "principal_sid": "S-1-5-21-605709967-1798081244-1819099823-1106",
+          "right": "WriteProperty:msDS-SupersededServiceAccountState",
+          "object_dn": "CN=target.migrate,OU=Targets,OU=Reaper,DC=dmsalab,DC=local",
+          "attribute": "msDS-SupersededServiceAccountState",
+          "object_type_guid": "a4693096-a4c3-4ecd-b8cb-73cd6398b7a2",
+          "inherited": false,
+          "source": null
+        }
+      ],
+      "parse_warnings": []
+    }
+  ],
+  "findings": []
+}

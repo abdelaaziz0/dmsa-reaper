@@ -1,0 +1,254 @@
+{
+  "_comment": "Offline MapState fixture for dmsalab.local lab. Represents dmsa-reaper map output for the reaper.low principal. Load with: dmsa-reaper map --offline-fixture docs/lab-fixture-dmsalab.json --json state.json",
+  "_principals_covered": {
+    "reaper.low": "S-1-5-21-3627486609-1408162073-2316259700-1001",
+    "reaper.nested": "S-1-5-21-3627486609-1408162073-2316259700-1002",
+    "reaper.primary": "S-1-5-21-3627486609-1408162073-2316259700-1003",
+    "reaper.dacl": "S-1-5-21-3627486609-1408162073-2316259700-1004",
+    "reaper.genericwrite": "S-1-5-21-3627486609-1408162073-2316259700-1005",
+    "reaper.existing": "S-1-5-21-3627486609-1408162073-2316259700-1006",
+    "reaper.norights": "S-1-5-21-3627486609-1408162073-2316259700-1007",
+    "Domain_Users_group": "S-1-5-21-3627486609-1408162073-2316259700-513",
+    "Reaper-Operators_group": "S-1-5-21-3627486609-1408162073-2316259700-1100",
+    "Reaper-Nested-L2_group": "S-1-5-21-3627486609-1408162073-2316259700-1102",
+    "Reaper-DACL-Only_group": "S-1-5-21-3627486609-1408162073-2316259700-1103",
+    "Reaper-GenericWrite-Only_group": "S-1-5-21-3627486609-1408162073-2316259700-1104"
+  },
+  "environment": {
+    "domain": "dmsalab.local",
+    "forest": "dmsalab.local",
+    "default_nc": "DC=dmsalab,DC=local",
+    "config_nc": "CN=Configuration,DC=dmsalab,DC=local",
+    "schema_nc": "CN=Schema,CN=Configuration,DC=dmsalab,DC=local",
+    "dmsa_schema_status": "present",
+    "server_2025_dc_status": "present",
+    "kds_root_key_status": "present",
+    "dmsa_capable_status": "present",
+    "ldap_signing_status": "unknown",
+    "ldaps_status": "unknown",
+    "channel_binding_status": "unknown",
+    "has_dmsa_schema": true,
+    "has_server_2025_dc": true,
+    "has_kds_root_key": true,
+    "dmsa_capable": true,
+    "dcs": [
+      {
+        "name": "DC01.dmsalab.local",
+        "os": "Windows Server 2025 Standard",
+        "is_gc": true
+      }
+    ]
+  },
+  "schema_cache": {
+    "schema_nc": "CN=Schema,CN=Configuration,DC=dmsalab,DC=local",
+    "config_nc": "CN=Configuration,DC=dmsalab,DC=local",
+    "object_version": 91,
+    "dmsa_class_guid": null,
+    "dmsa_class_guid_source": null,
+    "attr_guids": {},
+    "attr_guid_sources": {},
+    "search_flags": {},
+    "confidential_attrs": []
+  },
+  "current_principal": {
+    "name": "reaper.low",
+    "sid": "S-1-5-21-3627486609-1408162073-2316259700-1001",
+    "groups": [
+      "S-1-5-21-3627486609-1408162073-2316259700-1100",
+      "S-1-5-21-3627486609-1408162073-2316259700-513"
+    ]
+  },
+  "containers": [
+    {
+      "_comment": "DIRECT: Reaper-Operators → CreateChild on this container",
+      "dn": "OU=DMSA-Direct,OU=Lab,DC=dmsalab,DC=local",
+      "object_class": "organizationalUnit",
+      "owner_sid": null,
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-3627486609-1408162073-2316259700-1001",
+          "right": "CreateChild",
+          "object_dn": "OU=DMSA-Direct,OU=Lab,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": "group:Reaper-Operators"
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "_comment": "LEGACY: Reaper-Operators → CreateChild; no target-side attrs granted for legacy path validation",
+      "dn": "OU=DMSA-Legacy,OU=Lab,DC=dmsalab,DC=local",
+      "object_class": "organizationalUnit",
+      "owner_sid": null,
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-3627486609-1408162073-2316259700-1001",
+          "right": "CreateChild",
+          "object_dn": "OU=DMSA-Legacy,OU=Lab,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": "group:Reaper-Operators"
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "_comment": "PRIMARYGROUP: Domain Users → CreateChild; reaper.low is a domain user",
+      "dn": "OU=DMSA-PrimaryGroup,OU=Lab,DC=dmsalab,DC=local",
+      "object_class": "organizationalUnit",
+      "owner_sid": null,
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-3627486609-1408162073-2316259700-1001",
+          "right": "CreateChild",
+          "object_dn": "OU=DMSA-PrimaryGroup,OU=Lab,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": "primaryGroupID:Domain-Users"
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "_comment": "NEGATIVE CONTROL: GenericWrite only — must NOT produce CreateChild path",
+      "dn": "OU=DMSA-GenericWriteOnly,OU=Lab,DC=dmsalab,DC=local",
+      "object_class": "organizationalUnit",
+      "owner_sid": null,
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-3627486609-1408162073-2316259700-1005",
+          "right": "GenericWrite",
+          "object_dn": "OU=DMSA-GenericWriteOnly,OU=Lab,DC=dmsalab,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": "group:Reaper-GenericWrite-Only"
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "_comment": "INDIRECT/DACL-ONLY: reaper.dacl has WriteDACL, reaper.low has no rights here",
+      "dn": "OU=DMSA-DACL-Only,OU=Lab,DC=dmsalab,DC=local",
+      "object_class": "organizationalUnit",
+      "owner_sid": null,
+      "rights": [],
+      "parse_warnings": []
+    },
+    {
+      "_comment": "NESTED: rights only for reaper.nested (via Reaper-Nested-L2), not for reaper.low",
+      "dn": "OU=DMSA-Nested,OU=Lab,DC=dmsalab,DC=local",
+      "object_class": "organizationalUnit",
+      "owner_sid": null,
+      "rights": [],
+      "parse_warnings": []
+    }
+  ],
+  "targets": [
+    {
+      "_comment": "DIRECT target: Reaper-Operators has WriteProperty on both superseded attrs",
+      "dn": "CN=victim.postpatch,OU=Targets,OU=Lab,DC=dmsalab,DC=local",
+      "sam": "victim.postpatch",
+      "sid": "S-1-5-21-3627486609-1408162073-2316259700-2001",
+      "object_classes": ["user"],
+      "owner_sid": null,
+      "writable_attrs": [
+        "msDS-SupersededManagedAccountLink",
+        "msDS-SupersededServiceAccountState"
+      ],
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-3627486609-1408162073-2316259700-1001",
+          "right": "WriteProperty:msDS-SupersededManagedAccountLink",
+          "object_dn": "CN=victim.postpatch,OU=Targets,OU=Lab,DC=dmsalab,DC=local",
+          "attribute": "msDS-SupersededManagedAccountLink",
+          "object_type_guid": null,
+          "inherited": false,
+          "source": "group:Reaper-Operators"
+        },
+        {
+          "principal_sid": "S-1-5-21-3627486609-1408162073-2316259700-1001",
+          "right": "WriteProperty:msDS-SupersededServiceAccountState",
+          "object_dn": "CN=victim.postpatch,OU=Targets,OU=Lab,DC=dmsalab,DC=local",
+          "attribute": "msDS-SupersededServiceAccountState",
+          "object_type_guid": null,
+          "inherited": false,
+          "source": "group:Reaper-Operators"
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "_comment": "PRIMARYGROUP target: Domain Users has WriteProperty (reaper.low IS a domain user)",
+      "dn": "CN=victim.primary,OU=Targets,OU=Lab,DC=dmsalab,DC=local",
+      "sam": "victim.primary",
+      "sid": "S-1-5-21-3627486609-1408162073-2316259700-2002",
+      "object_classes": ["user"],
+      "owner_sid": null,
+      "writable_attrs": [
+        "msDS-SupersededManagedAccountLink",
+        "msDS-SupersededServiceAccountState"
+      ],
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-3627486609-1408162073-2316259700-1001",
+          "right": "WriteProperty:msDS-SupersededManagedAccountLink",
+          "object_dn": "CN=victim.primary,OU=Targets,OU=Lab,DC=dmsalab,DC=local",
+          "attribute": "msDS-SupersededManagedAccountLink",
+          "object_type_guid": null,
+          "inherited": false,
+          "source": "primaryGroupID:Domain-Users"
+        },
+        {
+          "principal_sid": "S-1-5-21-3627486609-1408162073-2316259700-1001",
+          "right": "WriteProperty:msDS-SupersededServiceAccountState",
+          "object_dn": "CN=victim.primary,OU=Targets,OU=Lab,DC=dmsalab,DC=local",
+          "attribute": "msDS-SupersededServiceAccountState",
+          "object_type_guid": null,
+          "inherited": false,
+          "source": "primaryGroupID:Domain-Users"
+        }
+      ],
+      "parse_warnings": []
+    },
+    {
+      "_comment": "LEGACY target: no writable superseded attrs for reaper.low — only legacy-oneway-link possible",
+      "dn": "CN=victim.legacy,OU=Targets,OU=Lab,DC=dmsalab,DC=local",
+      "sam": "victim.legacy",
+      "sid": "S-1-5-21-3627486609-1408162073-2316259700-2003",
+      "object_classes": ["user"],
+      "owner_sid": null,
+      "writable_attrs": [],
+      "rights": [],
+      "parse_warnings": []
+    },
+    {
+      "_comment": "DACL target: reaper.dacl has WriteDACL here; reaper.low has no rights",
+      "dn": "CN=victim.dacl,OU=Targets,OU=Lab,DC=dmsalab,DC=local",
+      "sam": "victim.dacl",
+      "sid": "S-1-5-21-3627486609-1408162073-2316259700-2004",
+      "object_classes": ["user"],
+      "owner_sid": null,
+      "writable_attrs": [],
+      "rights": [],
+      "parse_warnings": []
+    },
+    {
+      "_comment": "NEGATIVE CONTROL target: no rights for anyone tested here",
+      "dn": "CN=victim.negative,OU=NegativeControls,OU=Lab,DC=dmsalab,DC=local",
+      "sam": "victim.negative",
+      "sid": "S-1-5-21-3627486609-1408162073-2316259700-2005",
+      "object_classes": ["user"],
+      "owner_sid": null,
+      "writable_attrs": [],
+      "rights": [],
+      "parse_warnings": []
+    }
+  ],
+  "dmsas": [],
+  "findings": []
+}

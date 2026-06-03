@@ -1,0 +1,24 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+.eggs/
+*.egg-info/
+*.egg
+
+# Operation logs written by the tool at runtime.
+.reaper/operations/*.json
+.reaper/operations/*.tmp
+.reaper/operations/.operation_log.lock
+
+# Environment / IDE.
+.env
+.venv/
+venv/
+.claude/
+.idea/
+.vscode/
+*.swp

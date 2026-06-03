@@ -1,0 +1,22 @@
+{
+  "domain": "dmsalab.local",
+  "allowedOUs": [
+    "OU=DMSACreate,OU=Reaper,DC=dmsalab,DC=local"
+  ],
+  "allowedTargets": [
+    "CN=target.migrate,OU=Targets,OU=Reaper,DC=dmsalab,DC=local"
+  ],
+  "denyTargets": [
+    "CN=krbtgt,CN=Users,DC=dmsalab,DC=local",
+    "CN=Administrateur,CN=Users,DC=dmsalab,DC=local",
+    "CN=Administrator,CN=Users,DC=dmsalab,DC=local",
+    "CN=DMSA,OU=Domain Controllers,DC=dmsalab,DC=local"
+  ],
+  "denySubtrees": [
+    "OU=Domain Controllers,DC=dmsalab,DC=local"
+  ],
+  "allowDaclPrimitives": false,
+  "allowBroadDacl": false,
+  "requireConfirmString": true,
+  "allowDefaultSensitiveDenyOverride": false
+}

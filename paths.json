@@ -1,0 +1,77 @@
+[{
+  "id": "P-0001",
+  "primitive": "postpatch-mutual-pair",
+  "principal": "S-1-5-21-605709967-1798081244-1819099823-1106",
+  "dmsa_dn": null,
+  "container_dn": "OU=DMSACreate,OU=Reaper,DC=dmsalab,DC=local",
+  "target_dn": "CN=target.migrate,OU=Targets,OU=Reaper,DC=dmsalab,DC=local",
+  "required_rights": [
+    "CreateChild:msDS-DelegatedManagedServiceAccount on container",
+    "WriteProperty:msDS-SupersededManagedAccountLink on target",
+    "WriteProperty:msDS-SupersededServiceAccountState on target"
+  ],
+  "requires_create_dmsa": true,
+  "requires_modify_dmsa": true,
+  "requires_modify_target": true,
+  "requires_modify_container_dacl": false,
+  "requires_modify_target_dacl": false,
+  "executable": true,
+  "requires_operator_target": false,
+  "candidate_targets_count": 0,
+  "verification_modes": [
+    "ldap"
+  ],
+  "rollback_available": true,
+  "confidence": "high",
+  "environment_warnings": []
+},{
+  "id": "P-0002",
+  "primitive": "legacy-oneway-link",
+  "principal": "S-1-5-21-605709967-1798081244-1819099823-1106",
+  "dmsa_dn": null,
+  "container_dn": "OU=DMSACreate,OU=Reaper,DC=dmsalab,DC=local",
+  "target_dn": "CN=vboxuser,CN=Users,DC=dmsalab,DC=local",
+  "required_rights": [
+    "CreateChild:msDS-DelegatedManagedServiceAccount on container",
+    "WriteProperty:msDS-ManagedAccountPrecededByLink on dMSA"
+  ],
+  "requires_create_dmsa": true,
+  "requires_modify_dmsa": true,
+  "requires_modify_target": false,
+  "requires_modify_container_dacl": false,
+  "requires_modify_target_dacl": false,
+  "executable": true,
+  "requires_operator_target": false,
+  "candidate_targets_count": 0,
+  "verification_modes": [
+    "ldap"
+  ],
+  "rollback_available": true,
+  "confidence": "medium",
+  "environment_warnings": []
+},{
+  "id": "P-0003",
+  "primitive": "legacy-oneway-link",
+  "principal": "S-1-5-21-605709967-1798081244-1819099823-1106",
+  "dmsa_dn": null,
+  "container_dn": "OU=DMSACreate,OU=Reaper,DC=dmsalab,DC=local",
+  "target_dn": "CN=target.migrate,OU=Targets,OU=Reaper,DC=dmsalab,DC=local",
+  "required_rights": [
+    "CreateChild:msDS-DelegatedManagedServiceAccount on container",
+    "WriteProperty:msDS-ManagedAccountPrecededByLink on dMSA"
+  ],
+  "requires_create_dmsa": true,
+  "requires_modify_dmsa": true,
+  "requires_modify_target": false,
+  "requires_modify_container_dacl": false,
+  "requires_modify_target_dacl": false,
+  "executable": true,
+  "requires_operator_target": false,
+  "candidate_targets_count": 0,
+  "verification_modes": [
+    "ldap"
+  ],
+  "rollback_available": true,
+  "confidence": "medium",
+  "environment_warnings": []
+}]

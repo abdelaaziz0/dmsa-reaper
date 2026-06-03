@@ -1,0 +1,58 @@
+{
+  "environment": {
+    "domain": "corp.local",
+    "forest": null,
+    "default_nc": "DC=corp,DC=local",
+    "config_nc": "CN=Configuration,DC=corp,DC=local",
+    "schema_nc": "CN=Schema,CN=Configuration,DC=corp,DC=local",
+    "has_dmsa_schema": true,
+    "has_server_2025_dc": true,
+    "has_kds_root_key": true,
+    "dmsa_capable": true,
+    "dcs": []
+  },
+  "schema_cache": {
+    "schema_nc": "CN=Schema,CN=Configuration,DC=corp,DC=local",
+    "config_nc": "CN=Configuration,DC=corp,DC=local",
+    "object_version": 91,
+    "dmsa_class_guid": "0feb936f-47b3-49f2-9386-1dedc2c23765",
+    "attr_guids": {},
+    "search_flags": {},
+    "confidential_attrs": []
+  },
+  "current_principal": null,
+  "dmsas": [],
+  "containers": [
+    {
+      "dn": "OU=Apps,DC=corp,DC=local",
+      "object_class": "organizationalUnit",
+      "owner_sid": null,
+      "rights": [
+        {
+          "principal_sid": "S-1-5-21-X-1000",
+          "right": "CreateChild:dMSA",
+          "object_dn": "OU=Apps,DC=corp,DC=local",
+          "attribute": null,
+          "object_type_guid": null,
+          "inherited": false,
+          "source": null
+        }
+      ]
+    }
+  ],
+  "targets": [
+    {
+      "dn": "CN=svc-backup,CN=Users,DC=corp,DC=local",
+      "sam": "svc-backup",
+      "sid": "S-1-5-21-X-2000",
+      "object_classes": ["top", "person", "user"],
+      "owner_sid": null,
+      "writable_attrs": [
+        "msDS-SupersededManagedAccountLink",
+        "msDS-SupersededServiceAccountState"
+      ],
+      "rights": []
+    }
+  ],
+  "findings": []
+}
