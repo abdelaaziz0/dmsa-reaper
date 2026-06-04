@@ -31,7 +31,7 @@
     "dmsa_proof_required": true,
     "accepted_statuses": [
       "capable",
-      "partially-capable",
+      "ldap-path-present-proof-required",
       "blocked",
       "unknown"
     ]

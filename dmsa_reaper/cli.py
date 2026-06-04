@@ -868,6 +868,7 @@ def doctor_cmd(
         dc_host=dc_host,
         dc_fqdn=dc_fqdn,
         run_cache_checks=kerberos,
+        attempt_cifs_ticket=kerberos,
     )
     dns_diag = inspect_dns_environment(domain=domain, dc_ip=dc_ip, dc_fqdn=dc_fqdn)
     if kerberos_diag.time_skew_ok is False:
@@ -917,7 +918,10 @@ def _print_kerberos_table(kerberos: dict, dns: dict) -> None:
     table.add_row("ccache exists", "yes" if kerberos.get("ccache_exists") else "no", "")
     table.add_row("TGT principal", str(kerberos.get("tgt_principal") or "not inspected"), "")
     cifs = kerberos.get("cifs_ticket")
-    table.add_row("CIFS ticket", str(cifs or kerberos.get("cifs_ticket_present") or "not inspected"), "")
+    cifs_status = cifs or kerberos.get("cifs_ticket_present") or "not inspected"
+    if kerberos.get("cifs_ticket_obtainable") is True:
+        cifs_status = f"{cifs_status} (obtained with kvno)"
+    table.add_row("CIFS ticket", str(cifs_status), "")
     table.add_row(
         "Impacket cache format",
         "; ".join(kerberos.get("imp_errata") or []) or "no notes",
@@ -947,6 +951,7 @@ def kerberos_doctor_cmd(
         dc_host=dc_host,
         dc_fqdn=dc_host,
         run_cache_checks=True,
+        attempt_cifs_ticket=True,
     )
     dns_diag = inspect_dns_environment(domain=domain, dc_ip=dc_ip, dc_fqdn=dc_host)
     summary = {
@@ -1558,6 +1563,14 @@ def exploit_cmd(
         op.metadata["allow_existing_dmsa_legacy_link"] = True
     if scope_hash:
         op.scope_file_hash = scope_hash
+    operation_domain = None
+    if state is not None and state.environment.domain:
+        operation_domain = state.environment.domain
+    elif domain:
+        operation_domain = domain
+    if operation_domain:
+        op.metadata.setdefault("domain", operation_domain.lower())
+        op.metadata.setdefault("realm", operation_domain.upper())
 
     # Embed current principal SID for DACL primitives that need it to build ACEs.
     if state is not None and state.current_principal:

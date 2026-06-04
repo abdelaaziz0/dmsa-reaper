@@ -135,3 +135,27 @@ def test_kerberos_doctor_json_contains_required_fields(tmp_path, monkeypatch):
     assert '"imp_errata"' in raw
     assert '"srv_lookup_ok": true' in raw
     assert '"recommended_nameserver": "192.168.56.10"' in raw
+
+
+def test_cifs_ticket_obtainable_sets_readiness_field(tmp_path, monkeypatch):
+    cache = tmp_path / "reaper.low.ccache"
+    cache.write_bytes(b"cache")
+    monkeypatch.setenv("KRB5CCNAME", str(cache))
+    monkeypatch.setattr(
+        kd,
+        "_inspect_klist",
+        lambda _ccache, _service: (True, "reaper.low@DMSALAB.LOCAL", False, None, []),
+    )
+    monkeypatch.setattr(kd, "_try_kvno", lambda _ccache, _service: (True, []))
+
+    diag = inspect_kerberos_environment(
+        domain="dmsalab.local",
+        dc_fqdn="DMSA.dmsalab.local",
+        run_cache_checks=True,
+        attempt_cifs_ticket=True,
+    )
+
+    assert diag.tgt_present is True
+    assert diag.cifs_ticket_present is True
+    assert diag.cifs_ticket_obtainable is True
+    assert diag.to_json()["cifs_ticket_obtainable"] is True

@@ -133,12 +133,14 @@ Example evidence file:
   "operation_id": "OP-YYYYMMDD-xxxxxxxx",
   "target_sam": "victim.postpatch",
   "created_dmsa_sam": "dmsarpr-abc123$",
+  "domain": "dmsalab.local",
+  "realm": "DMSALAB.LOCAL",
   "tool": "external",
+  "tool_version": "1.0",
   "result": "success",
   "evidence": {
-    "ticket_cache_path": "/tmp/dmsa-proof.ccache",
     "principal": "dmsarpr-abc123$@DMSALAB.LOCAL",
-    "service": "cifs/dc01.dmsalab.local",
+    "service": "cifs/dc01.dmsalab.local@DMSALAB.LOCAL",
     "timestamp": "2026-06-02T10:00:00Z"
   }
 }

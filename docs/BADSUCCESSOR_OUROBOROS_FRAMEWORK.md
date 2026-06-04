@@ -7,6 +7,18 @@ credential extraction.
 
 ## Validated Lab Lifecycle
 
+The BadSuccessor wrapper lifecycle has been live-validated against the
+Windows Server 2025 ADBuilder lab:
+
+- `badsuccessor assess`
+- `badsuccessor plan`
+- `badsuccessor execute --dry-run`
+- `badsuccessor execute --confirm`
+- `badsuccessor verify --mode ldap`
+- `badsuccessor report`
+- `rollback`
+- repeated rollback idempotency
+
 ```bash
 dmsa-reaper doctor --domain dmsalab.local --dc-ip 192.168.56.10 \
   -u reaper.low -p '<password>'
@@ -46,6 +58,11 @@ LDAP verification proves directory state only. It does not prove Kerberos ticket
 issuance. Kerberos-side success must be recorded with structured,
 operation-bound external evidence.
 
+Current limitation: LDAP state validation is complete for the validated lab
+lifecycle; Kerberos dMSA proof remains external and unverified until a
+structured `kerberos-dmsa-proof` is supplied and accepted for the active
+operation.
+
 ## Commands
 
 ### BadSuccessor
@@ -62,10 +79,21 @@ operation-bound external evidence.
 - `badsuccessor report`: summarizes execution, proof state, rollback state,
   artifacts, and cleanup limits.
 
+Reports include `ldap_verified`, `kerberos_base_ready`,
+`kerberos_dmsa_verified`, `full_badsuccessor_success`,
+`ouroboros_status`, and `required_next_proof`. `full_badsuccessor_success`
+stays false unless LDAP verification and operation-bound Kerberos dMSA proof
+both succeed.
+
 ### Ouroboros
 
 Ouroboros support is assessment-first. Native credential extraction and
 automated secret retrieval are not implemented.
+
+When an LDAP transition path exists but Kerberos dMSA proof is missing, the
+status is `ldap-path-present-proof-required`. This means the directory-side
+conditions are present enough to plan or test an approved operation; it is not
+an Ouroboros success claim.
 
 - `ouroboros assess`: checks dMSA migration capability, KDS, Server 2025 DC
   status, target sensitivity, unreadable dMSA state, and required proofs.
@@ -103,11 +131,14 @@ is active and the operation ID, target SAM, and created dMSA SAM match:
   "operation_id": "OP-...",
   "target_sam": "target.migrate",
   "created_dmsa_sam": "reaper-pwned-xxxxxx$",
+  "domain": "dmsalab.local",
+  "realm": "DMSALAB.LOCAL",
   "tool": "external-verifier",
+  "tool_version": "1.0",
   "result": "success",
   "evidence": {
-    "principal": "...",
-    "service": "...",
+    "principal": "reaper-pwned-xxxxxx$@DMSALAB.LOCAL",
+    "service": "cifs/DMSA.dmsalab.local@DMSALAB.LOCAL",
     "timestamp": "..."
   }
 }

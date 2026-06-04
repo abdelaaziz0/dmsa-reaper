@@ -22,3 +22,5 @@ venv/
 .idea/
 .vscode/
 *.swp
+.codex/
+.agents/

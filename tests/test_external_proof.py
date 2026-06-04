@@ -37,11 +37,14 @@ def _evidence(tmp_path: Path, **overrides) -> Path:
         "operation_id": "OP-0001",
         "target_sam": "target.migrate",
         "created_dmsa_sam": "proof-dmsa$",
+        "domain": "corp.local",
+        "realm": "CORP.LOCAL",
         "tool": "external",
+        "tool_version": "1.0",
+        "result": "success",
         "evidence": {
-            "ticket_cache_path": "/tmp/proof.ccache",
             "principal": "proof-dmsa$@CORP.LOCAL",
-            "service": "cifs/dc.corp.local",
+            "service": "cifs/dc.corp.local@CORP.LOCAL",
             "timestamp": "2026-06-02T10:00:00Z",
         },
     }
@@ -100,7 +103,18 @@ def test_evidence_file_marks_external_verified_and_records_hash(tmp_path):
     assert stored.external_verified_at is not None
     assert meta["ok"] is True
     assert meta["evidence_sha256"] == hashlib.sha256(evidence.read_bytes()).hexdigest()
-    assert "ticket_cache_path" in meta["evidence"]
+    assert meta["domain"] == "corp.local"
+    assert meta["realm"] == "CORP.LOCAL"
+    assert meta["tool"] == "external"
+    assert meta["tool_version"] == "1.0"
+    assert meta["principal"] == "proof-dmsa$@CORP.LOCAL"
+    assert meta["service"] == "cifs/dc.corp.local@CORP.LOCAL"
+    assert meta["timestamp"] == "2026-06-02T10:00:00Z"
+    assert meta["evidence"] == {
+        "principal": "proof-dmsa$@CORP.LOCAL",
+        "service": "cifs/dc.corp.local@CORP.LOCAL",
+        "timestamp": "2026-06-02T10:00:00Z",
+    }
 
 
 def test_base_proof_does_not_mark_operation_externally_verified(tmp_path):
@@ -155,6 +169,60 @@ def test_evidence_mismatched_target_rejected(tmp_path):
     assert "target_sam" in result.output
 
 
+def test_evidence_target_dn_can_bind_to_operation_target(tmp_path):
+    ops_dir = _operation(tmp_path)
+    evidence = _evidence(tmp_path)
+    data = json.loads(evidence.read_text())
+    data.pop("target_sam")
+    data["target_dn"] = "cn=target.migrate, ou=targets, dc=corp, dc=local"
+    evidence.write_text(json.dumps(data), encoding="utf-8")
+
+    result = RUNNER.invoke(app, [
+        "verify",
+        "--mode", "external",
+        "--ops-dir", str(ops_dir),
+        "--op", "OP-0001",
+        "--evidence-file", str(evidence),
+    ])
+
+    assert result.exit_code == 0, result.output
+    stored = load_operation("OP-0001", ops_dir=ops_dir)
+    assert stored.verified_external is True
+    assert stored.metadata["external_verification"]["target_dn"] == data["target_dn"]
+
+
+def test_evidence_wrong_domain_rejected(tmp_path):
+    ops_dir = _operation(tmp_path)
+    evidence = _evidence(tmp_path, domain="evil.local")
+
+    result = RUNNER.invoke(app, [
+        "verify",
+        "--mode", "external",
+        "--ops-dir", str(ops_dir),
+        "--op", "OP-0001",
+        "--evidence-file", str(evidence),
+    ])
+
+    assert result.exit_code != 0
+    assert "domain" in result.output
+
+
+def test_evidence_wrong_realm_rejected(tmp_path):
+    ops_dir = _operation(tmp_path)
+    evidence = _evidence(tmp_path, realm="EVIL.LOCAL")
+
+    result = RUNNER.invoke(app, [
+        "verify",
+        "--mode", "external",
+        "--ops-dir", str(ops_dir),
+        "--op", "OP-0001",
+        "--evidence-file", str(evidence),
+    ])
+
+    assert result.exit_code != 0
+    assert "realm" in result.output
+
+
 def test_evidence_secret_looking_fields_rejected(tmp_path):
     ops_dir = _operation(tmp_path)
     evidence = _evidence(tmp_path)
@@ -172,6 +240,25 @@ def test_evidence_secret_looking_fields_rejected(tmp_path):
 
     assert result.exit_code != 0
     assert "secret-looking" in result.output
+
+
+def test_evidence_unknown_metadata_field_rejected(tmp_path):
+    ops_dir = _operation(tmp_path)
+    evidence = _evidence(tmp_path)
+    data = json.loads(evidence.read_text())
+    data["evidence"]["ticket_cache_path"] = "/tmp/proof.ccache"
+    evidence.write_text(json.dumps(data), encoding="utf-8")
+
+    result = RUNNER.invoke(app, [
+        "verify",
+        "--mode", "external",
+        "--ops-dir", str(ops_dir),
+        "--op", "OP-0001",
+        "--evidence-file", str(evidence),
+    ])
+
+    assert result.exit_code != 0
+    assert "unsupported field" in result.output
 
 
 def test_dmsa_evidence_rejected_after_rollback(tmp_path):

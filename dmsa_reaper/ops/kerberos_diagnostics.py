@@ -31,6 +31,7 @@ class KerberosDiagnostics:
     tgt_present: bool | None = None
     tgt_principal: str | None = None
     cifs_ticket_present: bool | None = None
+    cifs_ticket_obtainable: bool | None = None
     cifs_ticket: str | None = None
     imp_errata: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
@@ -51,6 +52,7 @@ class KerberosDiagnostics:
             "tgt_present": self.tgt_present,
             "tgt_principal": self.tgt_principal,
             "cifs_ticket_present": self.cifs_ticket_present,
+            "cifs_ticket_obtainable": self.cifs_ticket_obtainable,
             "cifs_ticket": self.cifs_ticket,
             "imp_errata": self.imp_errata,
             "warnings": self.warnings,
@@ -191,6 +193,24 @@ def _inspect_klist(ccache: str | None, service: str | None) -> tuple[bool | None
     return principal is not None, principal, service_present, service_match, []
 
 
+def _try_kvno(ccache: str | None, service: str) -> tuple[bool | None, list[str]]:
+    if not ccache:
+        return None, ["KRB5CCNAME is unset; kvno was not attempted."]
+    env = os.environ.copy()
+    env["KRB5CCNAME"] = ccache
+    try:
+        proc = subprocess.run(["kvno", service], capture_output=True, text=True, env=env, timeout=8)
+    except FileNotFoundError:
+        return None, ["kvno is not installed; CIFS service ticket obtainability was not tested."]
+    except subprocess.SubprocessError as exc:
+        return None, [f"kvno failed: {exc}"]
+    if proc.returncode == 0:
+        return True, []
+    stderr = proc.stderr.strip().splitlines()
+    detail = stderr[-1] if stderr else "unknown error"
+    return False, [f"kvno could not obtain {service}: {detail}"]
+
+
 def inspect_kerberos_environment(
     *,
     domain: str,
@@ -198,6 +218,7 @@ def inspect_kerberos_environment(
     dc_host: str | None = None,
     dc_fqdn: str | None = None,
     run_cache_checks: bool = False,
+    attempt_cifs_ticket: bool = False,
     local_time: datetime | None = None,
 ) -> KerberosDiagnostics:
     diag = KerberosDiagnostics()
@@ -275,6 +296,20 @@ def inspect_kerberos_environment(
         diag.cifs_ticket_present = cifs_present
         diag.cifs_ticket = cifs_ticket
         diag.warnings.extend(klist_warnings)
+        if (
+            attempt_cifs_ticket
+            and service
+            and cifs_present is False
+            and diag.ccache_exists
+        ):
+            obtainable, kvno_warnings = _try_kvno(diag.krb5ccname, service)
+            diag.cifs_ticket_obtainable = obtainable
+            diag.warnings.extend(kvno_warnings)
+            if obtainable is True:
+                diag.cifs_ticket_present = True
+                diag.cifs_ticket = service
+            elif obtainable is False:
+                diag.failure_classes.append("kerberos-tooling-inconclusive")
 
     return diag
 

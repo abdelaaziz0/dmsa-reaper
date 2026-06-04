@@ -70,11 +70,14 @@ def _dmsa_evidence(tmp_path: Path) -> Path:
             "operation_id": "OP-0001",
             "target_sam": "target.migrate",
             "created_dmsa_sam": "proof-dmsa$",
+            "domain": "corp.local",
+            "realm": "CORP.LOCAL",
             "tool": "external-verifier",
+            "tool_version": "1.0",
             "result": "success",
             "evidence": {
                 "principal": "proof-dmsa$@CORP.LOCAL",
-                "service": "cifs/dc.corp.local",
+                "service": "cifs/dc.corp.local@CORP.LOCAL",
                 "timestamp": "2026-06-03T10:00:00Z",
             },
         }),
@@ -155,8 +158,15 @@ def test_badsuccessor_report_marks_ldap_only_success_without_kerberos_claim(tmp_
     assert result.exit_code == 0, result.output
     data = json.loads(result.output)
     lifecycle = data["operation_lifecycle"]
+    assert data["ldap_verified"] is True
+    assert data["kerberos_base_ready"] is False
+    assert data["kerberos_dmsa_verified"] is False
+    assert data["full_badsuccessor_success"] is False
+    assert data["ouroboros_status"] == "not-assessed"
+    assert data["required_next_proof"] == "operation-bound kerberos-dmsa-proof"
     assert lifecycle["ldap_verified"] is True
     assert lifecycle["external_verified"] is False
+    assert lifecycle["full_badsuccessor_success"] is False
     assert data["kerberos"]["dmsa_proof_verified"] is False
     assert any("Kerberos proof" in item or "dMSA Kerberos proof" in item for item in lifecycle["limitations"])
 
@@ -187,7 +197,7 @@ def test_paths_only_badsuccessor_macro_filters_to_expected_primitives(tmp_path):
     }
 
 
-def test_ouroboros_assess_current_fixture_is_partial_and_requires_proof():
+def test_ouroboros_assess_current_fixture_is_ldap_path_present_proof_required():
     result = RUNNER.invoke(app, [
         "ouroboros",
         "assess",
@@ -198,8 +208,14 @@ def test_ouroboros_assess_current_fixture_is_partial_and_requires_proof():
 
     assert result.exit_code == 0, result.output
     data = json.loads(result.output)
-    assert data["ouroboros_status"] == "partially-capable"
+    assert data["ouroboros_status"] == "ldap-path-present-proof-required"
     assert data["ouroboros_capable"] is False
+    assert data["kerberos_dmsa_verified"] is False
+    assert data["verified_external"] is False
+    assert data["full_badsuccessor_success"] is False
+    assert data["native_extraction"] == "not_implemented"
+    assert data["external_proof_required"] is True
+    assert data["required_next_proof"] == "operation-bound kerberos-dmsa-proof"
     assert any("kerberos-dmsa-proof" in item for item in data["ouroboros_required_proofs"])
     assert data["safety_constraints"]
 
@@ -309,5 +325,69 @@ def test_operation_report_excludes_secrets_and_marks_kerberos_absent(tmp_path):
     assert "this-must-not-appear" not in result.output
     data = json.loads(result.output)
     assert data["secrets_logged"] is False
+    assert data["ldap_verified"] is True
+    assert data["kerberos_base_ready"] is False
+    assert data["kerberos_dmsa_verified"] is False
+    assert data["full_badsuccessor_success"] is False
+    assert data["required_next_proof"] == "operation-bound kerberos-dmsa-proof"
     assert data["kerberos"]["dmsa_proof_verified"] is False
     assert data["ldap_artifacts"]["modified_attributes"] == []
+
+
+def test_operation_report_base_proof_is_readiness_not_full_success(tmp_path):
+    ops_dir = _operation(tmp_path, ldap_verified=True)
+    op = load_operation("OP-0001", ops_dir=ops_dir)
+    op.metadata["kerberos_base_check"] = {
+        "type": "kerberos-base-proof",
+        "ok": True,
+        "status": "verified",
+        "evidence_sha256": "abc123",
+    }
+    save_operation(op, ops_dir=ops_dir)
+
+    result = RUNNER.invoke(app, [
+        "badsuccessor",
+        "report",
+        "--ops-dir",
+        str(ops_dir),
+        "--op",
+        "OP-0001",
+        "--json",
+    ])
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["kerberos_base_ready"] is True
+    assert data["kerberos_dmsa_verified"] is False
+    assert data["full_badsuccessor_success"] is False
+    assert data["kerberos"]["base_ready"] is True
+    assert data["required_next_proof"] == "operation-bound kerberos-dmsa-proof"
+
+
+def test_operation_report_dmsa_proof_marks_full_badsuccessor_success(tmp_path):
+    ops_dir = _operation(tmp_path, ldap_verified=True)
+    op = load_operation("OP-0001", ops_dir=ops_dir)
+    op.verified_external = True
+    op.metadata["external_verification"] = {
+        "type": "kerberos-dmsa-proof",
+        "ok": True,
+        "status": "verified",
+        "evidence_sha256": "def456",
+    }
+    save_operation(op, ops_dir=ops_dir)
+
+    result = RUNNER.invoke(app, [
+        "badsuccessor",
+        "report",
+        "--ops-dir",
+        str(ops_dir),
+        "--op",
+        "OP-0001",
+        "--json",
+    ])
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["kerberos_dmsa_verified"] is True
+    assert data["full_badsuccessor_success"] is True
+    assert data["required_next_proof"] == "none"

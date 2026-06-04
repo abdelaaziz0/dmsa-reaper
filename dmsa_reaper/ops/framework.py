@@ -225,6 +225,7 @@ def operation_lifecycle_summary(operation: Operation) -> dict[str, Any]:
     external_meta = operation.metadata.get("external_verification")
     base_meta = operation.metadata.get("kerberos_base_check")
     rollback_meta = operation.metadata.get("rollback_verification")
+    full_badsuccessor_success = operation.verified_ldap and operation.verified_external
     return {
         "operation_id": operation.id,
         "primitive": operation.primitive,
@@ -237,6 +238,7 @@ def operation_lifecycle_summary(operation: Operation) -> dict[str, Any]:
         "kerberos_base_verified": isinstance(base_meta, dict) and base_meta.get("ok") is True,
         "kerberos_dmsa_verified": operation.verified_external,
         "external_verified": operation.verified_external,
+        "full_badsuccessor_success": full_badsuccessor_success,
         "external_verification_status": (
             external_meta.get("status") if isinstance(external_meta, dict) else None
         ),
@@ -264,8 +266,17 @@ def _operation_limitations(operation: Operation) -> list[str]:
 def build_operation_report(operation: Operation) -> dict[str, Any]:
     external = operation.metadata.get("external_verification")
     base = operation.metadata.get("kerberos_base_check")
+    kerberos_base_ready = isinstance(base, dict) and base.get("ok") is True
+    kerberos_dmsa_verified = operation.verified_external
+    full_badsuccessor_success = operation.verified_ldap and kerberos_dmsa_verified
     return {
         "type": "operation-report",
+        "ldap_verified": operation.verified_ldap,
+        "kerberos_base_ready": kerberos_base_ready,
+        "kerberos_dmsa_verified": kerberos_dmsa_verified,
+        "full_badsuccessor_success": full_badsuccessor_success,
+        "ouroboros_status": str(operation.metadata.get("ouroboros_status") or "not-assessed"),
+        "required_next_proof": _required_next_proof(operation),
         "operation_lifecycle": operation_lifecycle_summary(operation),
         "ldap_artifacts": {
             "created_dmsa_objects": operation.created_dns,
@@ -283,8 +294,9 @@ def build_operation_report(operation: Operation) -> dict[str, Any]:
         "rights_used": _operation_required_rights(operation),
         "kerberos": {
             "base_proof_recorded": isinstance(base, dict),
+            "base_ready": kerberos_base_ready,
             "base_evidence_sha256": base.get("evidence_sha256") if isinstance(base, dict) else None,
-            "dmsa_proof_verified": operation.verified_external,
+            "dmsa_proof_verified": kerberos_dmsa_verified,
             "dmsa_evidence_sha256": (
                 external.get("evidence_sha256") if isinstance(external, dict) else None
             ),
@@ -304,6 +316,14 @@ def build_operation_report(operation: Operation) -> dict[str, Any]:
         "recovery_notes": operation.recovery_notes,
         "secrets_logged": False,
     }
+
+
+def _required_next_proof(operation: Operation) -> str:
+    if not operation.verified_ldap:
+        return "ldap-state-verification"
+    if not operation.verified_external:
+        return "operation-bound kerberos-dmsa-proof"
+    return "none"
 
 
 def _operation_required_rights(operation: Operation) -> list[str]:
@@ -326,6 +346,10 @@ def operation_report_markdown(report: dict[str, Any]) -> str:
         f"- Primitive: `{lifecycle['primitive']}`",
         f"- Status: `{lifecycle['status']}`",
         f"- LDAP verified: `{str(lifecycle['ldap_verified']).lower()}`",
+        f"- Kerberos base ready: `{str(report['kerberos_base_ready']).lower()}`",
+        f"- Kerberos dMSA proof verified: `{str(report['kerberos_dmsa_verified']).lower()}`",
+        f"- Full BadSuccessor success: `{str(report['full_badsuccessor_success']).lower()}`",
+        f"- Required next proof: `{report['required_next_proof']}`",
         f"- External dMSA proof verified: `{str(lifecycle['external_verified']).lower()}`",
         f"- Rolled back: `{str(lifecycle['rolled_back']).lower()}`",
         f"- Rollback verified: `{str(lifecycle['rollback_verified']).lower()}`",
@@ -380,8 +404,11 @@ def assess_ouroboros(
     elif self_paths:
         status = "capable"
     elif paths:
-        status = "partially-capable"
-        warnings.append("LDAP transition path exists, but native Ouroboros credential proof is not implemented.")
+        status = "ldap-path-present-proof-required"
+        warnings.append(
+            "LDAP transition path exists, but native Ouroboros credential proof is not "
+            "implemented; operation-bound kerberos-dmsa-proof is required."
+        )
     else:
         status = "unknown"
     required_proofs = [
@@ -395,6 +422,12 @@ def assess_ouroboros(
         "domain": state.environment.domain,
         "ouroboros_capable": capable,
         "ouroboros_status": status,
+        "kerberos_dmsa_verified": False,
+        "verified_external": False,
+        "full_badsuccessor_success": False,
+        "native_extraction": "not_implemented",
+        "external_proof_required": True,
+        "required_next_proof": "operation-bound kerberos-dmsa-proof",
         "ouroboros_blockers": blockers,
         "ouroboros_warnings": warnings,
         "ouroboros_required_proofs": required_proofs,
