@@ -40,7 +40,7 @@ LDAP/event artifacts.
 | Nested group right | Operator receives rights through nested group | principal SID set includes nested group | rights flow to paths | yes if scoped |
 | Deny ACE override | Deny WriteProperty/CreateChild before allow | map should not overclaim denied right | blocked or no path | no |
 | Inherited ACE | Parent grants inherited CreateChild/WriteProperty | inherited right appears with source | path emitted if effective | yes if scoped |
-| Owner-only WriteDACL | Operator owns object, no explicit WriteDACL | owner-implied WriteDACL path visible | DACL path low confidence/lab-unsafe | only with DACL gates |
+| Owner-only WriteDACL | Operator owns object, no explicit WriteDACL | owner-implied WriteDACL path visible | DACL path low confidence | only with DACL gates |
 | Target-side attrs writable | Target grants both superseded attrs | writable attrs include both names | postpatch path emitted | yes |
 | dMSA-side attrs writable | Existing dMSA grants required attrs | dMSA rights include explicit attrs | existing-dmsa-legacy-link path emitted; postpatch path requires target attrs too | legacy only with explicit flag |
 | LDAPS required | DC requires LDAP signing/LDAPS | LDAPS bind succeeds when `--use-ldaps` is passed | no path change | use `--use-ldaps` |

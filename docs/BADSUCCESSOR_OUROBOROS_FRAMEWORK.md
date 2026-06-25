@@ -156,8 +156,7 @@ are rejected.
   both sides. Requires exact dMSA-side and target-side proof.
 - `legacy-oneway-link` and `existing-dmsa-legacy-link`: lab/legacy only. They do
   not prove patched KDC behavior.
-- DACL helper primitives: lab-unsafe by default and require scope plus explicit
-  lab flags.
+- DACL helper primitives require scope gates and confirmed state revalidation.
 
 ## Safe Lab Notes
 

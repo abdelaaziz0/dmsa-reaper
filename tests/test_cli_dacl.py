@@ -2,7 +2,7 @@
 
 Tests cover:
   Fix 4 - dacl-container-escalate requires explicit --chain (no default)
-  DACL primitives require scope allow-listing and --lab-unsafe
+  DACL primitives require scope allow-listing
   Fix 2 - --paths mode loads state.json best-effort (non-fatal if missing)
 """
 from __future__ import annotations
@@ -86,7 +86,6 @@ def test_exploit_chain_required_for_dacl_container_escalate(tmp_path, monkeypatc
         "--paths", paths,
         "--path", "P-0001",
         "--scope", scope,
-        "--lab-unsafe",
         "--dry-run",
         # No --chain
     ])
@@ -106,7 +105,6 @@ def test_exploit_chain_legacy_accepted_for_dacl_container_escalate(tmp_path, mon
         "--path", "P-0001",
         "--scope", scope,
         "--chain", "legacy",
-        "--lab-unsafe",
         "--allow-broad-dacl",
         "--dry-run",
     ])
@@ -126,7 +124,6 @@ def test_exploit_chain_invalid_value_rejected(tmp_path, monkeypatch):
         "--path", "P-0001",
         "--scope", scope,
         "--chain", "invalid-mode",
-        "--lab-unsafe",
         "--dry-run",
     ])
     assert result.exit_code != 0
@@ -168,8 +165,8 @@ def test_exploit_scope_required_for_dacl_target_escalate(tmp_path, monkeypatch):
     assert "requires" in result.output and "--scope" in result.output
 
 
-def test_exploit_dacl_requires_lab_unsafe(tmp_path, monkeypatch):
-    """DACL primitives must be blocked unless --lab-unsafe is passed."""
+def test_exploit_dacl_no_longer_requires_lab_flag(tmp_path, monkeypatch):
+    """DACL primitives are gated by scope, not an extra lab flag."""
     monkeypatch.chdir(tmp_path)
     paths = _paths_json(tmp_path, "dacl-container-escalate")
     scope = _scope_json(tmp_path)
@@ -182,8 +179,7 @@ def test_exploit_dacl_requires_lab_unsafe(tmp_path, monkeypatch):
         "--scope", scope,
         "--dry-run",
     ])
-    assert result.exit_code != 0
-    assert "--lab-unsafe" in result.output
+    assert result.exit_code == 0, result.output
 
 
 def test_exploit_dacl_scope_must_allow_primitive(tmp_path, monkeypatch):
@@ -204,7 +200,6 @@ def test_exploit_dacl_scope_must_allow_primitive(tmp_path, monkeypatch):
         "--path", "P-0001",
         "--chain", "legacy",
         "--scope", str(scope_path),
-        "--lab-unsafe",
         "--dry-run",
     ])
     assert result.exit_code != 0
@@ -226,7 +221,6 @@ def test_exploit_paths_mode_missing_state_is_nonfatal(tmp_path, monkeypatch):
         "--path", "P-0001",
         "--scope", scope,
         "--chain", "legacy",
-        "--lab-unsafe",
         "--allow-broad-dacl",
         "--dry-run",
     ])
@@ -249,7 +243,6 @@ def test_exploit_paths_mode_with_state_injects_principal_sid(tmp_path, monkeypat
         "--path", "P-0001",
         "--scope", scope,
         "--chain", "legacy",
-        "--lab-unsafe",
         "--allow-broad-dacl",
         "--dry-run",
     ])

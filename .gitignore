@@ -1,5 +1,6 @@
 __pycache__/
 *.py[cod]
+*.log
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
@@ -9,7 +10,19 @@ build/
 *.egg-info/
 *.egg
 
+# Local docs/tests output.
+docs/
+tests/
+
+# Runtime JSON artifacts.
+state.json
+paths.json
+scope-*.json
+campaign*.json
+kerberos-*-proof.json
+
 # Operation logs written by the tool at runtime.
+.reaper/
 .reaper/operations/*.json
 .reaper/operations/*.tmp
 .reaper/operations/.operation_log.lock

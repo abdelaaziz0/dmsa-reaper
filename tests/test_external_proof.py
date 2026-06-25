@@ -311,7 +311,7 @@ def test_adapter_dry_run_renders_command_without_executing(tmp_path):
     assert "proof-dmsa$" in result.output
 
 
-def test_adapter_confirm_requires_lab_flag(tmp_path):
+def test_adapter_confirm_requires_scope(tmp_path):
     ops_dir = _operation(tmp_path)
 
     result = RUNNER.invoke(app, [
@@ -324,7 +324,7 @@ def test_adapter_confirm_requires_lab_flag(tmp_path):
     ])
 
     assert result.exit_code != 0
-    assert "lab-unsafe-kerberos-proof" in result.output
+    assert "--scope" in result.output
 
 
 def test_adapter_output_parser_accepts_structured_success_marker(tmp_path):
@@ -349,7 +349,6 @@ def test_adapter_output_parser_accepts_structured_success_marker(tmp_path):
         "--adapter-command", str(script),
         "--scope", str(scope),
         "--confirm-string", "corp.local",
-        "--lab-unsafe-kerberos-proof",
     ])
 
     assert result.exit_code == 0, result.output
@@ -380,7 +379,6 @@ def test_adapter_failure_records_dmsa_failure_class_without_raw_output(tmp_path)
         "--adapter-command", str(script),
         "--scope", str(scope),
         "--confirm-string", "corp.local",
-        "--lab-unsafe-kerberos-proof",
     ])
 
     assert result.exit_code != 0

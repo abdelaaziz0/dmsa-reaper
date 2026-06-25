@@ -205,7 +205,6 @@ class _DaclMockConn:
 
 def _op(primitive: str, **meta) -> Operation:
     if primitive in {"dacl-container-escalate", "dacl-target-escalate"}:
-        meta.setdefault("lab_unsafe", True)
         if meta.get("allow_broad_dacl"):
             meta.setdefault("scope_allow_broad_dacl", True)
     return Operation(id="OP-0001", primitive=primitive, metadata=meta)

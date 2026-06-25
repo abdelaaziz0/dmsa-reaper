@@ -27,8 +27,8 @@ These invariants must hold at the code level before any lab run:
       is not responsible for.
 - [ ] `existing-dmsa-legacy-link` and `legacy-oneway-link` require explicit
       lab flags and are blocked by default.
-- [ ] `dacl-*` primitives require `--lab-unsafe`, scope `allowDaclPrimitives`,
-      and confirmed state revalidation before any LDAP write.
+- [ ] `dacl-*` primitives require scope `allowDaclPrimitives` and confirmed
+      state revalidation before any LDAP write.
 
 ## Required: Lab Run Documentation
 

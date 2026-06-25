@@ -271,6 +271,10 @@ def build_operation_report(operation: Operation) -> dict[str, Any]:
     full_badsuccessor_success = operation.verified_ldap and kerberos_dmsa_verified
     return {
         "type": "operation-report",
+        "operation_id": operation.id,
+        "path_id": operation.path_id,
+        "primitive": operation.primitive,
+        "scope_file_hash": operation.scope_file_hash,
         "ldap_verified": operation.verified_ldap,
         "kerberos_base_ready": kerberos_base_ready,
         "kerberos_dmsa_verified": kerberos_dmsa_verified,
@@ -312,6 +316,13 @@ def build_operation_report(operation: Operation) -> dict[str, Any]:
             "Run rollback for reversible active operations.",
             "Verify created dMSA objects are gone and modified attributes match recorded before-values.",
         ],
+        "final_conclusion": (
+            "full-badsuccessor-success"
+            if full_badsuccessor_success
+            else "ldap-verified-kerberos-proof-missing"
+            if operation.verified_ldap
+            else "verification-incomplete"
+        ),
         "errors": operation.errors,
         "recovery_notes": operation.recovery_notes,
         "secrets_logged": False,
@@ -343,7 +354,9 @@ def operation_report_markdown(report: dict[str, Any]) -> str:
         "",
         "## Lifecycle",
         "",
+        f"- Path ID: `{report.get('path_id')}`",
         f"- Primitive: `{lifecycle['primitive']}`",
+        f"- Scope file hash: `{report.get('scope_file_hash')}`",
         f"- Status: `{lifecycle['status']}`",
         f"- LDAP verified: `{str(lifecycle['ldap_verified']).lower()}`",
         f"- Kerberos base ready: `{str(report['kerberos_base_ready']).lower()}`",
@@ -353,6 +366,7 @@ def operation_report_markdown(report: dict[str, Any]) -> str:
         f"- External dMSA proof verified: `{str(lifecycle['external_verified']).lower()}`",
         f"- Rolled back: `{str(lifecycle['rolled_back']).lower()}`",
         f"- Rollback verified: `{str(lifecycle['rollback_verified']).lower()}`",
+        f"- Final conclusion: `{report.get('final_conclusion')}`",
         "",
         "## LDAP Artifacts",
         "",

@@ -121,8 +121,6 @@ class DaclTargetEscalatePrimitive(Primitive):
         principal_sid = resolve_meta(meta, "principal_sid")
         allow_broad = bool(meta.get("allow_broad_dacl"))
 
-        if not meta.get("lab_unsafe"):
-            raise PrimitiveError("dacl-target-escalate requires --lab-unsafe")
         if allow_broad and not meta.get("scope_allow_broad_dacl"):
             raise PrimitiveError(
                 "broad DACL ACEs require allowBroadDacl=true in scope and --allow-broad-dacl"

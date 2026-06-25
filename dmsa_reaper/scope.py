@@ -136,7 +136,6 @@ def check_dn_in_scope(dn: str, scope: Scope, *, created: bool = False, label: st
 def check_dacl_scope_gates(
     scope: Scope | None,
     *,
-    lab_unsafe: bool,
     broad_requested: bool,
 ) -> None:
     """Raise ValueError unless scope and CLI flags permit DACL modification."""
@@ -144,8 +143,6 @@ def check_dacl_scope_gates(
         raise ValueError("DACL primitives require --scope <file>.")
     if not scope.allow_dacl_primitives:
         raise ValueError("DACL primitives require allowDaclPrimitives=true in the scope file.")
-    if not lab_unsafe:
-        raise ValueError("DACL primitives require --lab-unsafe.")
     if broad_requested and not scope.allow_broad_dacl:
         raise ValueError(
             "Broad DACL ACEs require allowBroadDacl=true in the scope file and "

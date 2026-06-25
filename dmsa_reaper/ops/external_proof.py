@@ -16,6 +16,13 @@ _SECRET_KEY_RE = re.compile(
 )
 _BASE64ISH_RE = re.compile(r"^[A-Za-z0-9+/]{80,}={0,2}$")
 _HEXISH_RE = re.compile(r"^[0-9a-fA-F]{32,}$")
+_ALLOWED_DIGEST_KEYS = frozenset({
+    "proof_sha256",
+    "evidence_sha256",
+    "stdout_sha256",
+    "stderr_sha256",
+    "command_sha256",
+})
 DMSA_PROOF_TYPE = "kerberos-dmsa-proof"
 BASE_PROOF_TYPE = "kerberos-base-proof"
 DMSA_REQUIRED_TOP_FIELDS = frozenset({
@@ -34,6 +41,7 @@ DMSA_OPTIONAL_TOP_FIELDS = frozenset({
     "tool_version",
     "verifier",
     "verifier_version",
+    "failure_class",  # present in failure proofs (result != "success")
 })
 DMSA_EVIDENCE_REQUIRED_FIELDS = frozenset({"principal", "service", "timestamp"})
 DMSA_EVIDENCE_OPTIONAL_FIELDS = frozenset({"proof_method"})
@@ -183,6 +191,8 @@ def _contains_secret(value: Any, *, path: str = "$") -> list[str]:
     if isinstance(value, dict):
         for key, child in value.items():
             child_path = f"{path}.{key}"
+            if str(key) in _ALLOWED_DIGEST_KEYS:
+                continue
             if _SECRET_KEY_RE.search(str(key)):
                 findings.append(f"secret-looking evidence key: {child_path}")
             findings.extend(_contains_secret(child, path=child_path))
@@ -233,38 +243,68 @@ def validate_kerberos_evidence(
     return validate_kerberos_dmsa_evidence(operation, evidence, evidence_sha256)
 
 
-def validate_kerberos_base_evidence(
-    operation: Operation,
+def validate_kerberos_base_evidence_for_operation(
+    operation: Operation | None,
     evidence: dict[str, Any],
     evidence_sha256: str,
 ) -> dict[str, Any]:
     if evidence.get("type") != BASE_PROOF_TYPE:
         raise ExternalProofError("evidence type must be 'kerberos-base-proof'")
     supplied_op = evidence.get("operation_id")
-    if supplied_op not in (None, "", operation.id):
+    allowed_ops: tuple[Any, ...] = (None, "")
+    if operation is not None:
+        allowed_ops = (None, "", operation.id)
+    if supplied_op not in allowed_ops:
+        expected = operation.id if operation is not None else "no operation_id"
         raise ExternalProofError(
-            f"base proof operation_id {supplied_op!r} does not match {operation.id!r}"
+            f"base proof operation_id {supplied_op!r} does not match {expected!r}"
         )
     if evidence.get("result") != "success":
         raise ExternalProofError("kerberos-base-proof result must be 'success'")
     secret_findings = _contains_secret(evidence)
     if secret_findings:
         raise ExternalProofError("; ".join(secret_findings))
+    principal = _require_string(evidence, "principal", label="kerberos-base-proof")
+    service = evidence.get("service")
+    if service is not None and (not isinstance(service, str) or not service.strip()):
+        raise ExternalProofError("kerberos-base-proof.service must be a non-empty string when present")
+    realm = evidence.get("realm") or _realm_from_principal(principal)
+    tickets = evidence.get("tickets")
+    if isinstance(tickets, dict):
+        if tickets.get("tgt_present") is not True:
+            raise ExternalProofError("kerberos-base-proof requires tickets.tgt_present=true")
+        if service and tickets.get("service_ticket_present") is not True:
+            raise ExternalProofError(
+                "kerberos-base-proof with a service requires tickets.service_ticket_present=true"
+            )
     return {
         "mode": "evidence-file",
         "status": "verified",
         "ok": True,
         "type": BASE_PROOF_TYPE,
         "operation_id": supplied_op,
-        "principal": evidence.get("principal"),
-        "service": evidence.get("service"),
+        "principal": principal,
+        "service": service,
+        "realm": realm,
         "tool": evidence.get("tool", "external"),
         "result": evidence.get("result"),
+        "timestamp": evidence.get("timestamp"),
+        "tickets": tickets if isinstance(tickets, dict) else None,
+        "environment": evidence.get("environment") if isinstance(evidence.get("environment"), dict) else None,
         "notes": evidence.get("notes"),
+        "proof_sha256": evidence.get("proof_sha256"),
         "evidence_sha256": evidence_sha256,
         "recorded_at": _utc_now_iso(),
         "scope": "base-kerberos-only",
     }
+
+
+def validate_kerberos_base_evidence(
+    operation: Operation,
+    evidence: dict[str, Any],
+    evidence_sha256: str,
+) -> dict[str, Any]:
+    return validate_kerberos_base_evidence_for_operation(operation, evidence, evidence_sha256)
 
 
 def validate_kerberos_dmsa_evidence(

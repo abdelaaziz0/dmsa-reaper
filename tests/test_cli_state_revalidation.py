@@ -468,7 +468,7 @@ def test_dacl_container_lacking_dacl_control_blocks_confirm(tmp_path, monkeypatc
     result = _RUNNER.invoke(
         app,
         _confirm_args(tmp_path, target_dn=_TARGET,
-                      extra_args=["--chain", "legacy", "--lab-unsafe", "--allow-broad-dacl"]),
+                      extra_args=["--chain", "legacy", "--allow-broad-dacl"]),
     )
 
     assert result.exit_code != 0, result.output
@@ -491,7 +491,7 @@ def test_dacl_container_with_writedacl_passes_state_validation(tmp_path, monkeyp
     result = _RUNNER.invoke(
         app,
         _confirm_args(tmp_path, target_dn=_TARGET,
-                      extra_args=["--chain", "legacy", "--lab-unsafe", "--allow-broad-dacl"]),
+                      extra_args=["--chain", "legacy", "--allow-broad-dacl"]),
     )
 
     # State validation must not fire. Any failure must NOT be a state validation block.
@@ -514,7 +514,7 @@ def test_dacl_target_lacking_dacl_control_blocks_confirm(tmp_path, monkeypatch):
         app,
         _confirm_args(
             tmp_path,
-            extra_args=["--lab-unsafe", "--allow-broad-dacl",
+            extra_args=["--allow-broad-dacl",
                         "--container-dn", _CONTAINER, "--allow-unmapped-container"],
         ),
     )
@@ -540,7 +540,7 @@ def test_dacl_target_with_writedacl_passes_state_validation(tmp_path, monkeypatc
         app,
         _confirm_args(
             tmp_path,
-            extra_args=["--lab-unsafe", "--allow-broad-dacl", "--container-dn", _CONTAINER],
+            extra_args=["--allow-broad-dacl", "--container-dn", _CONTAINER],
         ),
     )
 
@@ -760,7 +760,7 @@ def test_missing_principal_blocks_dacl_container_check(tmp_path, monkeypatch):
     result = _RUNNER.invoke(
         app,
         _confirm_args(tmp_path, target_dn=_TARGET,
-                      extra_args=["--chain", "legacy", "--lab-unsafe", "--allow-broad-dacl"]),
+                      extra_args=["--chain", "legacy", "--allow-broad-dacl"]),
     )
 
     assert result.exit_code != 0, result.output
@@ -780,7 +780,7 @@ def test_missing_principal_blocks_dacl_target_check(tmp_path, monkeypatch):
     result = _RUNNER.invoke(
         app,
         _confirm_args(tmp_path, extra_args=[
-            "--lab-unsafe", "--allow-broad-dacl", "--container-dn", _CONTAINER,
+            "--allow-broad-dacl", "--container-dn", _CONTAINER,
         ]),
     )
 
