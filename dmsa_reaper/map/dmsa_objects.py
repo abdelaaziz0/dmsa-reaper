@@ -11,6 +11,7 @@ from dmsa_reaper.ldap.query import search_with_sd
 from dmsa_reaper.models import DmsaObject, Principal, Right, SchemaCache
 from dmsa_reaper.map.principal import principal_sid_set
 from dmsa_reaper.ldap.sid import entry_sid
+from dmsa_reaper.utils import bytes_to_guid_le
 
 _MISSING_SD_WARNING = "nTSecurityDescriptor missing or unreadable; effective-rights result is incomplete"
 
@@ -37,6 +38,7 @@ def enumerate_dmsas(
         "distinguishedName",
         "sAMAccountName",
         "objectSid",
+        "objectGUID",
         "msDS-DelegatedMSAState",
         "msDS-GroupMSAMembership",
         "msDS-ManagedAccountPrecededByLink",
@@ -85,7 +87,10 @@ def enumerate_dmsas(
             dmsa_class_guid=dmsa_guid,
             attr_guids=attr_guids,
             side="dmsa",
+            null_dacl=psd.null_dacl,
         )
+        if psd.parse_failed:
+            operator_rights = []
 
         # Rights the dMSA principal has on itself (acting as the dMSA computer account).
         # Used for self-write-map and self-pkinit-loop classification.
@@ -100,10 +105,19 @@ def enumerate_dmsas(
                 attr_guids=attr_guids,
                 side="dmsa",
                 is_self=True,
+                null_dacl=psd.null_dacl,
             )
+            if psd.parse_failed:
+                self_rights = []
 
+        guid_raw = (
+            e["objectGUID"].raw_values[0]
+            if "objectGUID" in e and e["objectGUID"].raw_values
+            else None
+        )
         out.append(DmsaObject(
             dn=dn,
+            object_guid=(bytes_to_guid_le(bytes(guid_raw)) if guid_raw and len(guid_raw) == 16 else None),
             sam=(
                 str(e.sAMAccountName.value)
                 if "sAMAccountName" in e and e.sAMAccountName.value

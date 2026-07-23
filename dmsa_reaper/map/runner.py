@@ -34,6 +34,8 @@ def run_live_map(
 
     schema_cache = SchemaResolver(conn, schema_nc, config_nc).resolve()
     env = build_environment(conn, config.domain, schema_cache)
+    env.mapped_dc_host = config.dc_host
+    env.mapped_dc_ip = config.dc_ip
 
     principal = get_current_principal(conn, default_nc, config.username)
 

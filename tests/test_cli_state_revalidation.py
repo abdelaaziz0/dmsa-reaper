@@ -24,6 +24,7 @@ import pytest
 from typer.testing import CliRunner
 
 from dmsa_reaper.cli import app
+from dmsa_reaper.models import Principal
 from dmsa_reaper.ops.operation_log import load_operation
 
 _RUNNER = CliRunner()
@@ -33,6 +34,14 @@ _TARGET = "CN=svc,DC=corp,DC=local"
 _DMSA = "CN=dmsa1,OU=Reaper,DC=corp,DC=local"
 _DOMAIN = "corp.local"
 _PRINCIPAL = "S-1-5-21-1-2-3-500"
+
+
+@pytest.fixture(autouse=True)
+def _bound_identity(monkeypatch):
+    monkeypatch.setattr(
+        "dmsa_reaper.cli.get_current_principal",
+        lambda *_args, **_kwargs: Principal(name="operator", sid=_PRINCIPAL),
+    )
 
 
 # ── fixture helpers ───────────────────────────────────────────────────────────
@@ -135,7 +144,6 @@ def _paths(tmp_path, primitive: str, *, extra: dict | None = None) -> str:
         "requires_modify_target_dacl": primitive == "dacl-target-escalate",
         "requires_operator_target": primitive in ("postpatch-mutual-pair", "legacy-oneway-link", "dacl-container-escalate"),
         "executable": True,
-        "rollback_available": True,
         "required_rights": [],
     }
     if extra:
@@ -161,7 +169,23 @@ class _MockConn:
         return True
 
     def search(self, search_base, search_filter, search_scope, attributes, controls=None):
+        if attributes == ["objectGUID"] and any(item[0] == search_base for item in self.added):
+            class _Attr:
+                raw_values = [bytes(range(16))]
+                values = []
+                value = None
+
+            class _Entry:
+                def __contains__(self, key):
+                    return key == "objectGUID"
+
+                def __getitem__(self, key):
+                    return _Attr()
+
+            self._entries = [_Entry()]
+            return True
         self._entries = []
+        return True
 
     @property
     def entries(self):
@@ -185,6 +209,7 @@ def _confirm_args(
         "--path", "P-0001",
         "--scope", str(tmp_path / "scope.json"),
         "--domain", _DOMAIN,
+        "--username", "operator",
         "--confirm",
     ]
     if target_dn:
@@ -788,8 +813,7 @@ def test_missing_principal_blocks_dacl_target_check(tmp_path, monkeypatch):
     assert "current_principal" in result.output
 
 
-def test_allow_unmapped_container_bypasses_missing_principal_for_container_check(tmp_path, monkeypatch):
-    """--allow-unmapped-container must bypass missing-principal for the container check."""
+def test_allow_unmapped_container_cannot_bypass_execution_identity(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     _state(tmp_path, container_rights=["CreateChild:dMSA"],
            target_writable_attrs=["msDS-SupersededManagedAccountLink",
@@ -806,15 +830,12 @@ def test_allow_unmapped_container_bypasses_missing_principal_for_container_check
                       extra_args=["--allow-unmapped-container", "--ops-dir", str(ops_dir)]),
     )
 
-    assert result.exit_code == 0, result.output
-    op_file = next(ops_dir.glob("OP-*.json"))
-    op = load_operation(op_file.stem, ops_dir=ops_dir)
-    assert op.metadata.get("allow_unmapped_container") is True
-    assert any("current_principal" in w for w in op.metadata.get("warnings", []))
+    assert result.exit_code != 0
+    assert "fresh authenticated map" in result.output
+    assert list(ops_dir.glob("OP-*.json")) == []
 
 
-def test_allow_unmapped_dmsa_bypasses_missing_principal_for_dmsa_check(tmp_path, monkeypatch):
-    """--allow-unmapped-dmsa must bypass missing-principal for the dMSA check."""
+def test_allow_unmapped_dmsa_cannot_bypass_execution_identity(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     _state(tmp_path,
            dmsa_rights=["GenericAll"],
@@ -832,11 +853,9 @@ def test_allow_unmapped_dmsa_bypasses_missing_principal_for_dmsa_check(tmp_path,
                       extra_args=["--allow-unmapped-dmsa", "--ops-dir", str(ops_dir)]),
     )
 
-    assert result.exit_code == 0, result.output
-    op_file = next(ops_dir.glob("OP-*.json"))
-    op = load_operation(op_file.stem, ops_dir=ops_dir)
-    assert op.metadata.get("allow_unmapped_dmsa") is True
-    assert any("current_principal" in w for w in op.metadata.get("warnings", []))
+    assert result.exit_code != 0
+    assert "fresh authenticated map" in result.output
+    assert list(ops_dir.glob("OP-*.json")) == []
 
 
 def test_allow_unmapped_dmsa_does_not_bypass_missing_principal_for_container_check(tmp_path, monkeypatch):

@@ -312,9 +312,9 @@ def validate_kerberos_dmsa_evidence(
     evidence: dict[str, Any],
     evidence_sha256: str,
 ) -> dict[str, Any]:
-    if operation.status != "executed" or operation.rolled_back:
+    if operation.status != "executed":
         raise ExternalProofError(
-            "external Kerberos proof can only be recorded for an executed, not rolled-back operation"
+            "external Kerberos proof can only be recorded for an executed operation"
         )
     if evidence.get("type") != DMSA_PROOF_TYPE:
         raise ExternalProofError("evidence type must be 'kerberos-dmsa-proof'")

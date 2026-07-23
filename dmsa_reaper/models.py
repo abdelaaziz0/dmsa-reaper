@@ -56,6 +56,8 @@ class Environment(BaseModel):
     has_kds_root_key: bool = False
     dmsa_capable: bool = False
     dcs: list[dict[str, Any]] = Field(default_factory=list)
+    mapped_dc_host: str | None = None
+    mapped_dc_ip: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -106,6 +108,7 @@ class Right(BaseModel):
 
 class DmsaObject(BaseModel):
     dn: str
+    object_guid: str | None = None
     sam: str | None = None
     sid: str | None = None
     state: int | None = None
@@ -125,6 +128,7 @@ class DmsaObject(BaseModel):
 
 class ContainerObject(BaseModel):
     dn: str
+    object_guid: str | None = None
     object_class: str | None = None
     owner_sid: str | None = None
     rights: list[Right] = Field(default_factory=list)
@@ -133,6 +137,7 @@ class ContainerObject(BaseModel):
 
 class TargetObject(BaseModel):
     dn: str
+    object_guid: str | None = None
     sam: str | None = None
     sid: str | None = None
     object_classes: list[str] = Field(default_factory=list)
@@ -175,7 +180,6 @@ class PathCandidate(BaseModel):
     # Use --expand-targets on the paths command to see one row per target.
     candidate_targets_count: int = 0
     verification_modes: list[str] = Field(default_factory=lambda: ["ldap"])
-    rollback_available: bool = True
     confidence: Confidence = Confidence.medium
     # Non-empty when environment prerequisites are uncertain (e.g. KDS unknown).
     # Exploitation may fail until all environment checks are resolved.
@@ -240,8 +244,8 @@ class AttributeValue(BaseModel):
         return self.value
 
     def comparison_key(self) -> tuple[str, str]:
-        # Normalize semantic binary types (security_descriptor, dn, sid) to "bytes" so that
-        # rollback verification compares correctly against raw LDAP values parsed as "bytes".
+        # Normalize semantic binary types for comparisons against raw LDAP values
+        # parsed as "bytes".
         normalized = (
             "bytes" if self.type in ("bytes", "security_descriptor", "dn", "sid") else self.type
         )
@@ -255,7 +259,7 @@ class AttributeChange(BaseModel):
     after: list[AttributeValue] | None = None
     mode: Literal["add", "replace", "delete"]
     step_name: str | None = None
-    step_status: Literal["planned", "written", "verified", "rolled-back"] | None = None
+    step_status: Literal["planned", "written", "verified", "cleaned"] | None = None
 
     @field_validator("before", "after", mode="before")
     @classmethod
@@ -294,25 +298,22 @@ class Operation(BaseModel):
     maybe_created_dns: list[str] = Field(default_factory=list)
     changed_attrs: list[AttributeChange] = Field(default_factory=list)
     requested_ticket: bool = False
-    # "verified" means the operation's current active LDAP/external state is
-    # verified. It is cleared after rollback because the exploit state is gone.
     verified: bool = False
-    # Historical verification flags remain true after rollback to preserve proof
-    # that a verification succeeded before the operation was reverted.
     verified_ldap: bool = False
     verified_external: bool = False
-    rollback_available: bool = True
-    rolled_back: bool = False
-    rollback_verified: bool = False
+    verified_ticket: bool = False
+    cleanup_available: bool = True
+    cleaned_up: bool = False
+    cleanup_verified: bool = False
     tool_version: str | None = None
     started_at: str = Field(default_factory=_utc_now_iso)
     updated_at: str = Field(default_factory=_utc_now_iso)
     ldap_verified_at: str | None = None
     external_verified_at: str | None = None
-    rolled_back_at: str | None = None
-    rollback_verified_at: str | None = None
+    ticket_verified_at: str | None = None
+    cleaned_up_at: str | None = None
+    cleanup_verified_at: str | None = None
     scope_file_hash: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     errors: list[str] = Field(default_factory=list)
     recovery_notes: list[str] = Field(default_factory=list)
-    manual_rollback_commands: list[str] = Field(default_factory=list)

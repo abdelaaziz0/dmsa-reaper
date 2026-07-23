@@ -11,7 +11,6 @@ LAB_USER="${LAB_USER:-reaper.low}"
 PASSWORD="${PASSWORD:-}"
 SCOPE="${SCOPE:-docs/lab-scope-dmsalab.json}"
 OUT_DIR="${OUT_DIR:-/tmp/dmsa-reaper-live-campaign}"
-ROLLBACK_POLICY="${ROLLBACK_POLICY:-always}"
 DRY_RUN="${DRY_RUN:-0}"
 
 if [[ -z "$PASSWORD" ]]; then
@@ -31,7 +30,6 @@ args=(
   -p "$PASSWORD"
   --scope "$SCOPE"
   --confirm-string "$DOMAIN"
-  --rollback-policy "$ROLLBACK_POLICY"
   --json "$CAMPAIGN_JSON"
 )
 
@@ -46,9 +44,6 @@ if command -v jq >/dev/null 2>&1; then
   if [[ "$DRY_RUN" != "1" ]]; then
     jq -e '.ldap_verified == true' "$CAMPAIGN_JSON" >/dev/null
     jq -e '.full_badsuccessor_success == false' "$CAMPAIGN_JSON" >/dev/null
-    if [[ "$ROLLBACK_POLICY" == "always" ]]; then
-      jq -e '.rollback_status == "rolled-back" and .rollback_verified == true' "$CAMPAIGN_JSON" >/dev/null
-    fi
   fi
 fi
 

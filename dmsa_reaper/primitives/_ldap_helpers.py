@@ -4,6 +4,10 @@ import os
 
 from ldap3 import BASE, Connection
 
+from dmsa_reaper.ldap.query import ensure_search_succeeded
+from dmsa_reaper.models import Operation
+from dmsa_reaper.utils import bytes_to_guid_le
+
 DMSA_OBJECT_CLASSES = [
     "top",
     "person",
@@ -66,12 +70,13 @@ def read_attribute(conn: Connection, dn: str, attribute: str) -> list | None:
 
     Returns a list of raw values or None when the attribute is absent/object not found.
     """
-    conn.search(
+    ok = conn.search(
         search_base=dn,
         search_filter="(objectClass=*)",
         search_scope=BASE,
         attributes=[attribute],
     )
+    ensure_search_succeeded(conn, ok, f"read {attribute!r} on {dn!r}")
     if not conn.entries:
         return None
     entry = conn.entries[0]
@@ -79,3 +84,39 @@ def read_attribute(conn: Connection, dn: str, attribute: str) -> list | None:
         return None
     vals = entry[attribute].values
     return list(vals) if vals else None
+
+
+def read_object_guid(conn: Connection, dn: str) -> str:
+    """Read the server-assigned objectGUID immediately after object creation."""
+    ok = conn.search(
+        search_base=dn,
+        search_filter="(objectClass=*)",
+        search_scope=BASE,
+        attributes=["objectGUID"],
+    )
+    ensure_search_succeeded(conn, ok, f"read objectGUID on {dn!r}")
+    if not conn.entries:
+        raise RuntimeError(f"created object cannot be re-read for GUID journaling: {dn}")
+    entry = conn.entries[0]
+    if "objectGUID" not in entry:
+        raise RuntimeError(f"created object has no readable objectGUID: {dn}")
+    attr = entry["objectGUID"]
+    raw_values = getattr(attr, "raw_values", None) or []
+    if raw_values and isinstance(raw_values[0], (bytes, bytearray)):
+        raw = bytes(raw_values[0])
+        if len(raw) == 16:
+            return bytes_to_guid_le(raw)
+    value = getattr(attr, "value", None)
+    if value:
+        return str(value).lower()
+    values = getattr(attr, "values", None) or []
+    if values:
+        return str(values[0]).lower()
+    raise RuntimeError(f"created object has an empty objectGUID: {dn}")
+
+
+def journal_created_object(operation: Operation, conn: Connection, dn: str) -> str:
+    """Bind a created DN to its immutable GUID before later writes continue."""
+    guid = read_object_guid(conn, dn)
+    operation.metadata.setdefault("created_objects", {})[dn] = {"object_guid": guid}
+    return guid

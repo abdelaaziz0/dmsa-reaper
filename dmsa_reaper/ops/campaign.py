@@ -31,11 +31,7 @@ def final_status(
     full_success: bool,
     failed: bool,
     dry_run: bool,
-    rollback_status: str | None = None,
-    rollback_verified: bool = False,
 ) -> str:
-    if failed and rollback_status == "rolled-back" and rollback_verified:
-        return "failed-rolled-back"
     if failed:
         return "failed"
     if dry_run:
@@ -46,8 +42,6 @@ def final_status(
         return "ldap-verified-kerberos-base-ready-dmsa-proof-missing"
     if ldap_verified:
         return "ldap-verified-kerberos-proof-missing"
-    if rollback_status == "rolled-back" and rollback_verified:
-        return "rolled-back"
     return "ldap-not-verified"
 
 
@@ -62,8 +56,6 @@ def campaign_summary(payload: dict[str, Any]) -> dict[str, Any]:
         "kerberos_base_ready": payload.get("kerberos_base_ready", False),
         "kerberos_dmsa_verified": payload.get("kerberos_dmsa_verified", False),
         "full_badsuccessor_success": payload.get("full_badsuccessor_success", False),
-        "rollback_status": payload.get("rollback_status"),
-        "rollback_verified": payload.get("rollback_verified", False),
         "final_status": payload.get("final_status"),
         "step_count": len(payload.get("steps") or []),
     }
@@ -82,8 +74,6 @@ def campaign_markdown(payload: dict[str, Any]) -> str:
         f"- Kerberos base ready: `{str(summary['kerberos_base_ready']).lower()}`",
         f"- Kerberos dMSA proof verified: `{str(summary['kerberos_dmsa_verified']).lower()}`",
         f"- Full BadSuccessor success: `{str(summary['full_badsuccessor_success']).lower()}`",
-        f"- Rollback status: `{summary['rollback_status']}`",
-        f"- Rollback verified: `{str(summary['rollback_verified']).lower()}`",
         f"- Final status: `{summary['final_status']}`",
         "",
         "## Steps",

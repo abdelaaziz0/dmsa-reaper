@@ -46,8 +46,8 @@ class TestComputeEffectiveRights:
 
     def test_deny_blocks_right(self):
         aces = [
-            Ace(sid=USER_SID, ace_type="allow", rights={"GenericAll"}),
             Ace(sid=USER_SID, ace_type="deny", rights={"WriteProperty"}),
+            Ace(sid=USER_SID, ace_type="allow", rights={"GenericAll"}),
         ]
         rights, writable = compute_effective_rights(
             aces, USER_SID, {USER_SID}, DN, None,

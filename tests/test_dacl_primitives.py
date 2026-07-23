@@ -141,6 +141,21 @@ class _DaclMockConn:
         self._modify_n = 0
 
     def search(self, search_base, search_filter, search_scope, attributes, controls=None):
+        if attributes == ["objectGUID"] and any(item[0] == search_base for item in self.added):
+            class _GuidAttr:
+                raw_values = [bytes(range(16))]
+                values = []
+                value = None
+
+            class _GuidEntry:
+                def __contains__(self, key):
+                    return key == "objectGUID"
+
+                def __getitem__(self, key):
+                    return _GuidAttr()
+
+            self._entries = [_GuidEntry()]
+            return True
         class _RawAttr:
             def __init__(self, raw):
                 self.raw_values = [raw]
@@ -173,6 +188,7 @@ class _DaclMockConn:
                 return _GenAttr(None)
 
         self._entries = [_Entry(self._sd_bytes, "nTSecurityDescriptor")]
+        return True
 
     @property
     def entries(self):
@@ -296,8 +312,8 @@ def test_dacl_container_escalate_execute_without_guid_and_no_broad_fails(tmp_pat
     assert conn.added == []
 
 
-def test_dacl_container_escalate_rollback_restores_sd(tmp_path, monkeypatch):
-    """If dMSA creation fails, rollback must restore the original container SD."""
+def test_dacl_container_escalate_add_failure_records_partial_state(tmp_path, monkeypatch):
+    """If dMSA creation fails, the DACL write remains recorded as partial state."""
     monkeypatch.chdir(tmp_path)
     prim = DaclContainerEscalatePrimitive()
     conn = _DaclMockConn(fail_add=True)  # dMSA add will fail
@@ -308,11 +324,14 @@ def test_dacl_container_escalate_rollback_restores_sd(tmp_path, monkeypatch):
         principal_sid="S-1-5-21-1-2-3-500",
         allow_broad_dacl=True,
     )
-    with pytest.raises(PrimitiveError, match="rolled back"):
+    with pytest.raises(PrimitiveError, match="partial state"):
         prim.execute(op, confirm=True, conn=conn)
 
-    # Rollback must have issued a modify to restore the SD
-    assert len(conn.modified) >= 2  # 1 to write new SD + 1 to restore original
+    assert len(conn.modified) == 1
+    assert conn.deleted == []
+    assert op.status == "partial-failed"
+    assert op.changed_attrs[0].attribute == "nTSecurityDescriptor"
+    assert op.changed_attrs[0].step_status == "written"
 
 
 def test_dacl_container_escalate_preflight_missing_target(tmp_path, monkeypatch):
@@ -377,8 +396,8 @@ def test_dacl_target_escalate_execute_broad(tmp_path, monkeypatch):
     assert sd_change.step_name == "dacl-mod"
 
 
-def test_dacl_target_escalate_rollback_after_dacl_write(tmp_path, monkeypatch):
-    """If dMSA creation fails, SD must be restored."""
+def test_dacl_target_escalate_add_failure_records_partial_state(tmp_path, monkeypatch):
+    """If dMSA creation fails, the target DACL write remains recorded."""
     monkeypatch.chdir(tmp_path)
     prim = DaclTargetEscalatePrimitive()
     conn = _DaclMockConn(fail_add=True)
@@ -389,11 +408,14 @@ def test_dacl_target_escalate_rollback_after_dacl_write(tmp_path, monkeypatch):
         principal_sid="S-1-5-21-1-2-3-500",
         allow_broad_dacl=True,
     )
-    with pytest.raises(PrimitiveError, match="rolled back"):
+    with pytest.raises(PrimitiveError, match="partial state"):
         prim.execute(op, confirm=True, conn=conn)
 
-    # At least one modify to write the SD ACE + at least one to restore
-    assert len(conn.modified) >= 2
+    assert len(conn.modified) == 1
+    assert conn.deleted == []
+    assert op.status == "partial-failed"
+    assert op.changed_attrs[0].attribute == "nTSecurityDescriptor"
+    assert op.changed_attrs[0].step_status == "written"
 
 
 def test_dacl_target_escalate_preflight_missing_target():
@@ -725,8 +747,8 @@ def test_dacl_container_postpatch_refuses_without_target_write(tmp_path, monkeyp
     assert conn.added == []
 
 
-def test_dacl_container_postpatch_rollback_restores_all(tmp_path, monkeypatch):
-    """When a postpatch write fails, rollback must reverse the container DACL, target attrs, and dMSA."""
+def test_dacl_container_postpatch_failure_records_partial_state(tmp_path, monkeypatch):
+    """When a postpatch write fails, successful phases remain recorded."""
     monkeypatch.chdir(tmp_path)
     prim = DaclContainerEscalatePrimitive()
     # Fail on the 3rd modify call (msDS-SupersededServiceAccountState write)
@@ -746,10 +768,11 @@ def test_dacl_container_postpatch_rollback_restores_all(tmp_path, monkeypatch):
     with pytest.raises(PrimitiveError, match="Postpatch target write failed"):
         prim.execute(op, confirm=True, conn=conn)
 
-    # Rollback must have issued reversal writes (at minimum: restore link + restore SD)
-    # and deleted the dMSA.
-    assert len(conn.modified) >= 3   # write SD, write link, then rollback writes
-    assert len(conn.deleted) >= 1    # dMSA deleted
+    assert len(conn.modified) == 2   # write SD, then target link; state write failed
+    assert conn.deleted == []
+    assert op.status == "partial-failed"
+    assert op.created_dns
+    assert [change.step_status for change in op.changed_attrs] == ["written", "written", "planned"]
 
 
 # ── broad DACL warning appears in dry-run output ─────────────────────────────
@@ -822,42 +845,6 @@ def test_write_sd_delegates_to_write_dacl_sd():
 
     assert len(mock.calls) == 1
     assert mock.calls[0]["controls"] is not None
-
-
-def test_rollback_ntsecuritydescriptor_uses_sd_control():
-    """_reverse_change must use write_dacl_sd (with SD control) for nTSecurityDescriptor changes."""
-    from dmsa_reaper.models import AttributeChange, AttributeValue
-    from dmsa_reaper.ops.rollback import _reverse_change
-
-    mock = _CtrlCaptureMock()
-    change = AttributeChange(
-        dn="CN=target,DC=corp,DC=local",
-        attribute="nTSecurityDescriptor",
-        before=[AttributeValue.security_descriptor(_TEST_SD)],
-        after=[AttributeValue.security_descriptor(_TEST_SD)],
-        mode="replace",
-    )
-    _reverse_change(mock, change)
-
-    assert len(mock.calls) == 1, "one modify() call expected for SD rollback"
-    assert mock.calls[0]["controls"] is not None, "SD control must be passed for nTSecurityDescriptor rollback"
-
-
-def test_rollback_ntsecuritydescriptor_no_before_skips_write():
-    """_reverse_change with before=None and nTSecurityDescriptor must not call modify()."""
-    from dmsa_reaper.models import AttributeChange, AttributeValue
-    from dmsa_reaper.ops.rollback import _reverse_change
-
-    mock = _CtrlCaptureMock()
-    change = AttributeChange(
-        dn="CN=target,DC=corp,DC=local",
-        attribute="nTSecurityDescriptor",
-        before=None,
-        after=[AttributeValue.security_descriptor(_TEST_SD)],
-        mode="replace",
-    )
-    _reverse_change(mock, change)
-    assert len(mock.calls) == 0, "no-before nTSecurityDescriptor rollback must not write"
 
 
 def test_dacl_execute_sd_write_uses_sd_control(tmp_path, monkeypatch):

@@ -15,6 +15,11 @@ _ACE_ALLOW = frozenset({0x00, 0x05})   # ACCESS_ALLOWED_ACE, ACCESS_ALLOWED_OBJE
 _ACE_DENY  = frozenset({0x01, 0x06})   # ACCESS_DENIED_ACE,  ACCESS_DENIED_OBJECT_ACE
 _ACE_OBJECT = frozenset({0x05, 0x06})  # Object ACE types carry optional ObjectType GUID
 
+# Callback/conditional ACEs can affect AccessCheck but require claims and a
+# conditional-expression evaluator that this project does not implement.  A
+# DACL containing one must be classified as unknown, never as exploitable.
+_ACE_CALLBACK = frozenset({0x09, 0x0A, 0x0B, 0x0C})
+
 # AceFlags bits (from the AceFlags byte of the ACE header).
 _INHERITED_ACE         = 0x10  # ACE was inherited from a parent container
 _INHERIT_ONLY_ACE      = 0x08  # ACE applies to child objects only — NOT the current object
@@ -73,6 +78,11 @@ def _parse_ace(ace) -> tuple[Ace | None, str | None]:
     try:
         ace_type_val = int(ace["AceType"])
 
+        if ace_type_val in _ACE_CALLBACK:
+            return None, (
+                f"unsupported callback/conditional DACL ACE type 0x{ace_type_val:02x}; "
+                "effective access is unknown"
+            )
         if ace_type_val in _ACE_ALLOW:
             type_str = "allow"
         elif ace_type_val in _ACE_DENY:
@@ -142,7 +152,7 @@ def _try_parse_dacl(raw_sd: bytes) -> tuple[list[Ace], list[str]]:
     try:
         sd = ldaptypes.SR_SECURITY_DESCRIPTOR(data=raw_sd)
         dacl = sd["Dacl"]
-        if dacl is None:
+        if dacl is None or (isinstance(dacl, (bytes, bytearray)) and not dacl):
             return [], []
         for raw_ace in dacl["Data"]:
             parsed, warning = _parse_ace(raw_ace)
@@ -162,6 +172,7 @@ class ParsedSecurityDescriptor:
     raw: bytes | None = None
     parse_failed: bool = False
     parse_warnings: list[str] = field(default_factory=list)
+    null_dacl: bool = False
 
 
 def parse_security_descriptor(raw_sd: bytes | None) -> ParsedSecurityDescriptor:
@@ -184,6 +195,7 @@ def parse_security_descriptor(raw_sd: bytes | None) -> ParsedSecurityDescriptor:
         )
 
     owner_sid: str | None = None
+    null_dacl = False
     parse_failed = False
     parse_warnings: list[str] = []
 
@@ -192,6 +204,10 @@ def parse_security_descriptor(raw_sd: bytes | None) -> ParsedSecurityDescriptor:
         owner = sd["OwnerSid"]
         # After parsing, OwnerSid is either a LDAP_SID object or empty bytes b''.
         owner_sid = owner.formatCanonical() if hasattr(owner, "formatCanonical") else None
+        dacl = sd["Dacl"]
+        null_dacl = dacl is None or (
+            isinstance(dacl, (bytes, bytearray)) and not dacl
+        )
     except Exception as exc:
         parse_failed = True
         parse_warnings.append(f"SD owner parse error: {exc}")
@@ -207,6 +223,7 @@ def parse_security_descriptor(raw_sd: bytes | None) -> ParsedSecurityDescriptor:
         raw=raw_sd,
         parse_failed=parse_failed,
         parse_warnings=parse_warnings,
+        null_dacl=null_dacl,
     )
 
 

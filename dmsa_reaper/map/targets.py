@@ -8,6 +8,7 @@ from dmsa_reaper.ldap.query import search_with_sd
 from dmsa_reaper.models import Principal, SchemaCache, TargetObject
 from dmsa_reaper.map.principal import principal_sid_set
 from dmsa_reaper.ldap.sid import entry_sid
+from dmsa_reaper.utils import bytes_to_guid_le
 
 _MISSING_SD_WARNING = "nTSecurityDescriptor missing or unreadable; effective-rights result is incomplete"
 
@@ -32,8 +33,11 @@ def enumerate_targets(
         conn,
         default_nc,
         ldap_filter,
-        ["distinguishedName", "sAMAccountName", "objectSid", "objectClass"],
+        ["distinguishedName", "sAMAccountName", "objectSid", "objectGUID", "objectClass"],
         sdflags,
+        # When filtering to the current principal, apply the cap after SID
+        # matching so an unrelated early LDAP result cannot hide the account.
+        max_entries=None if only_current_principal else max_targets,
     )
 
     psid = principal.sid if principal else ""
@@ -63,14 +67,23 @@ def enumerate_targets(
             dmsa_class_guid=dmsa_guid,
             attr_guids=attr_guids,
             side="target",
+            null_dacl=psd.null_dacl,
         )
+        if psd.parse_failed:
+            rights, writable_attrs = [], []
 
         sid = entry_sid(e.objectSid) if "objectSid" in e else None
         if only_current_principal and (not principal or sid != principal.sid):
             continue
 
+        guid_raw = (
+            e["objectGUID"].raw_values[0]
+            if "objectGUID" in e and e["objectGUID"].raw_values
+            else None
+        )
         out.append(TargetObject(
             dn=dn,
+            object_guid=(bytes_to_guid_le(bytes(guid_raw)) if guid_raw and len(guid_raw) == 16 else None),
             sam=(
                 str(e.sAMAccountName.value)
                 if "sAMAccountName" in e and e.sAMAccountName.value

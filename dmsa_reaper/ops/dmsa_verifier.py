@@ -121,11 +121,6 @@ def _check_operation_ready(op: Operation) -> None:
         raise DmsaVerifierError(
             f"verifier requires operation status 'executed', got {op.status!r}"
         )
-    if op.rolled_back:
-        raise DmsaVerifierError(
-            "verifier refused: operation has been rolled back — "
-            "active dMSA Kerberos proof cannot be recorded"
-        )
 
 
 def run_dmsa_verifier(

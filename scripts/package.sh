@@ -59,6 +59,8 @@ zip -r "${ARCHIVE}" "${PARENT}" \
     --exclude '*/.agents' \
     --exclude '*/.codex/*' \
     --exclude '*/.codex' \
+    --exclude '*/devtools/*' \
+    --exclude '*/devtools' \
     --exclude '*.zip'
 
 echo ""

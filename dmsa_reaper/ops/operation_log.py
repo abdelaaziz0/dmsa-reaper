@@ -182,6 +182,30 @@ def save_operation(op: Operation, ops_dir: str | Path | None = None) -> None:
                 pass
             raise
 
+    # Keep run artifacts separate from the indexed operation journal.  This
+    # snapshot is also the durable anchor for ticket/cleanup artifacts.
+    run_dir = directory.parent / "runs" / op.id
+    run_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(run_dir, 0o700)
+    run_path = run_dir / "operation.json"
+    fd, tmp_name = tempfile.mkstemp(prefix=".operation.", suffix=".tmp", dir=run_dir)
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(payload)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, run_path)
+        os.chmod(run_path, 0o600)
+        _fsync_parent(run_dir)
+    except Exception:
+        try:
+            tmp_path.unlink()
+        except FileNotFoundError:
+            pass
+        raise
+
 
 def load_operation(op_id: str, ops_dir: str | Path | None = None) -> Operation:
     path = operation_path(op_id, ops_dir)

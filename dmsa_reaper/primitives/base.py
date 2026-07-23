@@ -111,10 +111,6 @@ class Primitive(ABC):
     def verify(self, operation: Operation, *, conn: "Connection | None" = None) -> bool:
         raise NotImplementedError
 
-    @abstractmethod
-    def rollback(self, operation: Operation, *, conn: "Connection | None" = None) -> bool:
-        raise NotImplementedError
-
     def dry_run_steps(self, operation: Operation) -> list[str]:
         """Return a human-readable description of what execute() would do.
 

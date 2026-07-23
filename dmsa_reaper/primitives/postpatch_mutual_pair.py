@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING
 from dmsa_reaper.ldap.modify import add_object, modify_attribute
 from dmsa_reaper.models import AttributeChange, AttributeValue, Operation, PathCandidate
 from dmsa_reaper.ops.operation_log import new_operation, save_operation
-from dmsa_reaper.ops.rollback import rollback_operation
 from dmsa_reaper.ops.verify import verify_operation_ldap
 from dmsa_reaper.primitives._ldap_helpers import (
     DMSA_MANAGED_PASSWORD_INTERVAL,
@@ -14,6 +13,7 @@ from dmsa_reaper.primitives._ldap_helpers import (
     DMSA_UAC,
     dmsa_dn,
     generate_dmsa_name,
+    journal_created_object,
     read_attribute,
     resolve_meta,
 )
@@ -33,13 +33,6 @@ class PostPatchMutualPairPrimitive(Primitive):
       1. Create new dMSA (with msDS-ManagedAccountPrecededByLink → target).
       2. Write target.msDS-SupersededManagedAccountLink  = dMSA DN.
       3. Write target.msDS-SupersededServiceAccountState = 2.
-
-    If step 2 or 3 fails, all successful writes are automatically rolled back
-    before the exception propagates to the caller.
-
-    Rollback order (managed by rollback_operation):
-      reversed(changed_attrs): step 3 → step 2
-      reversed(created_dns):   delete dMSA
 
     Requires:
         - CreateChild:msDS-DelegatedManagedServiceAccount on the container.
@@ -111,6 +104,7 @@ class PostPatchMutualPairPrimitive(Primitive):
                     "msDS-ManagedAccountPrecededByLink": target_dn,
                 },
             )
+            journal_created_object(operation, conn, new_dn)
         except Exception as exc:
             operation.status = "failed"
             operation.errors.append(f"add_object {new_dn}: {exc}")
@@ -124,7 +118,6 @@ class PostPatchMutualPairPrimitive(Primitive):
         save_operation(operation)
 
         # Steps 2 & 3 - target-side writes.
-        # Any failure here triggers automatic rollback of all prior writes.
         try:
             before_link = read_attribute(conn, target_dn, "msDS-SupersededManagedAccountLink")
             link_change = AttributeChange(
@@ -175,10 +168,8 @@ class PostPatchMutualPairPrimitive(Primitive):
             operation.errors.append(f"target-side write {target_dn}: {exc}")
             operation.metadata["execute_error"] = str(exc)
             save_operation(operation)
-            rollback_operation(operation, conn=conn)
-            save_operation(operation)
             raise PrimitiveError(
-                f"Execute failed at target-side write — automatic rollback triggered: {exc}"
+                f"Execute failed at target-side write; partial state is recorded: {exc}"
             ) from exc
 
         operation.status = "executed"
@@ -187,11 +178,6 @@ class PostPatchMutualPairPrimitive(Primitive):
 
     def verify(self, operation: Operation, *, conn: "Connection | None" = None) -> bool:
         return verify_operation_ldap(operation, conn=conn)
-
-    def rollback(self, operation: Operation, *, conn: "Connection | None" = None) -> bool:
-        operation = rollback_operation(operation, conn=conn)
-        save_operation(operation)
-        return operation.status == "rolled-back"
 
     def dry_run_steps(self, operation: Operation) -> list[str]:
         meta = operation.metadata
@@ -215,6 +201,5 @@ class PostPatchMutualPairPrimitive(Primitive):
             f"STEP 3  MODIFY  {target_dn}",
             f"  msDS-SupersededServiceAccountState      → {_STATE_ACTIVE}",
             "",
-            f"ROLLBACK (if step 2/3 fail): reverse MODIFY steps, then DELETE {new_dn}",
             "  (CN above is an example — a new random suffix is generated at execute time)",
         ]

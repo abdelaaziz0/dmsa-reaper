@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import json
+
 from dmsa_reaper.models import CheckStatus, Confidence, MapState, PathCandidate
 
 # Rights that are interesting on a dMSA object for informational self-write
@@ -27,7 +30,10 @@ _CREATE_DMSA_RIGHTS = frozenset({"CreateChild:dMSA", "CreateChild", "GenericAll"
 
 # Rights that let the operator modify a container or target DACL, enabling
 # them to grant themselves the rights they lack (indirect escalation).
-_DACL_CONTROL_RIGHTS = frozenset({"WriteDACL", "WriteOwner", "GenericAll"})
+# Direct DACL replacement requires WRITE_DAC.  WriteOwner is not sufficient
+# unless execution also performs and later restores an ownership transition,
+# which these primitives deliberately do not do.
+_DACL_CONTROL_RIGHTS = frozenset({"WriteDACL", "GenericAll"})
 
 # Self-write surfaces used for self-pkinit-loop detection (evaluated on self_rights).
 _SELF_KEY_CRED_RIGHTS = frozenset({
@@ -279,7 +285,6 @@ def classify_paths(state: MapState, *, expand_targets: bool = False) -> list[Pat
             requires_operator_target=True,
             confidence=Confidence.medium,
             verification_modes=["ldap"],
-            rollback_available=True,
         ))
         idx += 1
 
@@ -319,7 +324,6 @@ def classify_paths(state: MapState, *, expand_targets: bool = False) -> list[Pat
                         confidence=Confidence.medium,
                         environment_warnings=_env_warn,
                         verification_modes=["ldap"],
-                        rollback_available=True,
                     ))
                     idx += 1
             else:
@@ -341,7 +345,6 @@ def classify_paths(state: MapState, *, expand_targets: bool = False) -> list[Pat
                         confidence=Confidence.medium,
                         environment_warnings=_env_warn,
                         verification_modes=["ldap"],
-                        rollback_available=True,
                     ))
                     idx += 1
 
@@ -363,7 +366,6 @@ def classify_paths(state: MapState, *, expand_targets: bool = False) -> list[Pat
             requires_modify_dmsa=True,
             executable=False,
             confidence=Confidence.medium,
-            rollback_available=False,
         ))
         idx += 1
 
@@ -390,13 +392,12 @@ def classify_paths(state: MapState, *, expand_targets: bool = False) -> list[Pat
             requires_modify_dmsa=True,
             executable=False,
             confidence=Confidence.medium,
-            rollback_available=False,
         ))
         idx += 1
 
     # ------------------------------------------------------------------ #
     # 6. dacl-container-escalate                                          #
-    #    Operator has WriteDACL/WriteOwner on a container but lacks        #
+    #    Operator has WriteDACL on a container but lacks                   #
     #    CreateChild:dMSA.  They can modify the container DACL first,      #
     #    then follow the postpatch or legacy path.                         #
     # ------------------------------------------------------------------ #
@@ -422,13 +423,12 @@ def classify_paths(state: MapState, *, expand_targets: bool = False) -> list[Pat
                 executable=True,
                 confidence=Confidence.low,
                 environment_warnings=_env_warn,
-                rollback_available=True,
             ))
             idx += 1
 
     # ------------------------------------------------------------------ #
     # 7. dacl-target-escalate                                             #
-    #    Operator has WriteDACL/WriteOwner on a target but lacks the       #
+    #    Operator has WriteDACL on a target but lacks the                  #
     #    required target-side WriteProperty attributes.  They can modify   #
     #    the target DACL first, then use the postpatch path.              #
     # ------------------------------------------------------------------ #
@@ -450,8 +450,27 @@ def classify_paths(state: MapState, *, expand_targets: bool = False) -> list[Pat
                 executable=True,
                 confidence=Confidence.low,
                 environment_warnings=_env_warn,
-                rollback_available=True,
             ))
             idx += 1
 
+    guid_by_dn: dict[str, str | None] = {}
+    guid_by_dn.update({obj.dn.lower(): obj.object_guid for obj in state.containers})
+    guid_by_dn.update({obj.dn.lower(): obj.object_guid for obj in state.targets})
+    guid_by_dn.update({obj.dn.lower(): obj.object_guid for obj in state.dmsas})
+    for path in paths:
+        identity = {
+            "primitive": path.primitive,
+            "principal": path.principal,
+            "container_dn": path.container_dn,
+            "container_guid": guid_by_dn.get((path.container_dn or "").lower()),
+            "dmsa_dn": path.dmsa_dn,
+            "dmsa_guid": guid_by_dn.get((path.dmsa_dn or "").lower()),
+            "target_dn": path.target_dn,
+            "target_guid": guid_by_dn.get((path.target_dn or "").lower()),
+            "grouped": path.requires_operator_target,
+        }
+        digest = hashlib.sha256(
+            json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()[:12]
+        path.id = f"BS-{digest}"
     return paths

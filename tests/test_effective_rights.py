@@ -2,10 +2,23 @@ from dmsa_reaper.acl.ace_matcher import Ace
 from dmsa_reaper.acl.effective_rights import has_effective_right
 
 
-def test_deny_precedes_allow():
+def test_explicit_allow_before_inherited_deny_is_effective():
     aces = [
         Ace(sid="S-1-5-21-X-1000", ace_type="allow", rights={"WriteProperty"}),
+        Ace(
+            sid="S-1-5-21-X-1000",
+            ace_type="deny",
+            rights={"WriteProperty"},
+            inherited=True,
+        ),
+    ]
+    assert has_effective_right(aces, {"S-1-5-21-X-1000"}, "WriteProperty")
+
+
+def test_explicit_deny_before_allow_blocks_right():
+    aces = [
         Ace(sid="S-1-5-21-X-1000", ace_type="deny", rights={"WriteProperty"}),
+        Ace(sid="S-1-5-21-X-1000", ace_type="allow", rights={"WriteProperty"}),
     ]
     assert not has_effective_right(aces, {"S-1-5-21-X-1000"}, "WriteProperty")
 

@@ -7,6 +7,7 @@ from dmsa_reaper.acl.parser import parse_security_descriptor
 from dmsa_reaper.ldap.query import search_with_sd
 from dmsa_reaper.models import ContainerObject, Principal, SchemaCache
 from dmsa_reaper.map.principal import principal_sid_set
+from dmsa_reaper.utils import bytes_to_guid_le
 
 _MISSING_SD_WARNING = "nTSecurityDescriptor missing or unreadable; effective-rights result is incomplete"
 
@@ -25,7 +26,7 @@ def enumerate_containers(
         conn,
         default_nc,
         ldap_filter,
-        ["distinguishedName", "objectClass"],
+        ["distinguishedName", "objectGUID", "objectClass"],
         sdflags,
     )
     psid = principal.sid if principal else ""
@@ -56,10 +57,19 @@ def enumerate_containers(
             dmsa_class_guid=dmsa_guid,
             attr_guids=attr_guids,
             side="any",
+            null_dacl=psd.null_dacl,
         )
+        if psd.parse_failed:
+            rights = []
 
+        guid_raw = (
+            e["objectGUID"].raw_values[0]
+            if "objectGUID" in e and e["objectGUID"].raw_values
+            else None
+        )
         out.append(ContainerObject(
             dn=dn,
+            object_guid=(bytes_to_guid_le(bytes(guid_raw)) if guid_raw and len(guid_raw) == 16 else None),
             object_class=object_classes[-1] if object_classes else None,
             owner_sid=psd.owner_sid,
             rights=rights,

@@ -15,10 +15,12 @@ def has_effective_right(
 ) -> bool:
     """Evaluate whether the principal holds the requested right on an AD object.
 
-    Evaluation order (mirrors Windows AuthZ for DS objects):
+    Evaluation order (mirrors Windows AuthZ for one requested DS access bit):
     1. Owner-implied ReadControl / WriteDACL — suppressed when OWNER RIGHTS SID is present.
-    2. DENY ACEs (including OWNER RIGHTS SID ACEs when principal is the owner) — first match denies.
-    3. ALLOW ACEs (including OWNER RIGHTS SID ACEs when principal is the owner) — first match grants.
+    2. Walk applicable ACEs in their stored DACL order.  The first matching deny
+       rejects the still-ungranted bit; the first matching allow grants it.  A
+       later inherited deny cannot revoke a bit granted by an earlier explicit
+       allow.
 
     The OWNER RIGHTS SID (S-1-3-4) requires special treatment:
     - If *any* ACE with sid=S-1-3-4 is present in the DACL, the implicit owner grants
@@ -44,19 +46,16 @@ def has_effective_right(
         if right in ("WriteDACL", "ReadControl"):
             return True
 
-    applicable = [
-        a for a in aces
-        if ace_applies_to_sid(a, principal_sids, is_self=is_self, is_owner=is_owner)
-    ]
-
-    # DENY wins before any ALLOW — includes S-1-3-4 DENY ACEs for the owner.
-    for ace in applicable:
-        if ace.ace_type == "deny" and ace_matches_right(ace, right, object_type_guid):
+    for ace in aces:
+        if not ace_applies_to_sid(
+            ace, principal_sids, is_self=is_self, is_owner=is_owner
+        ):
+            continue
+        if not ace_matches_right(ace, right, object_type_guid):
+            continue
+        if ace.ace_type == "deny":
             return False
-
-    # First matching ALLOW grants the right.
-    for ace in applicable:
-        if ace.ace_type == "allow" and ace_matches_right(ace, right, object_type_guid):
+        if ace.ace_type == "allow":
             return True
 
     return False

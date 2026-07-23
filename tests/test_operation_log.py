@@ -131,6 +131,4 @@ def test_old_operation_log_missing_new_semantic_fields_loads_safely(tmp_path, mo
 
     assert loaded.verified is True
     assert loaded.verified_ldap is False
-    assert loaded.rolled_back is False
-    assert loaded.rollback_verified is False
     assert loaded.ldap_verified_at is None

@@ -18,6 +18,7 @@ def compute_effective_rights(
     attr_guids: dict[str, str] | None = None,
     side: str = "any",
     is_self: bool = False,
+    null_dacl: bool = False,
 ) -> tuple[list[Right], list[str]]:
     """Compute Rights held by the principal on one AD object.
 
@@ -46,6 +47,10 @@ def compute_effective_rights(
     writable_attrs: list[str] = []
 
     def _check(right_name: str, *, guid: str | None = None) -> bool:
+        # A null DACL grants all requested access.  This is intentionally
+        # distinct from an empty DACL, which grants none.
+        if null_dacl:
+            return True
         return has_effective_right(
             aces,
             principal_sids,

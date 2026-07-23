@@ -123,7 +123,6 @@ def test_verify_succeeds_when_ldap_returns_string_for_expected_int():
     assert op.verified is True
     assert op.verified_ldap is True
     assert op.verified_external is False
-    assert op.rollback_available is True
     assert op.ldap_verified_at is not None
 
 

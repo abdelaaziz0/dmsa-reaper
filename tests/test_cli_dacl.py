@@ -51,7 +51,6 @@ def _paths_json(tmp_path, primitive: str, path_id: str = "P-0001") -> str:
         "requires_modify_container_dacl": primitive == "dacl-container-escalate",
         "requires_modify_target_dacl": primitive == "dacl-target-escalate",
         "executable": True,
-        "rollback_available": True,
     }
     p = tmp_path / "paths.json"
     p.write_text(json.dumps([path]), encoding="utf-8")

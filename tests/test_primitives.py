@@ -1,10 +1,10 @@
-"""Tests for primitive execute/verify/rollback without live LDAP.
+"""Tests for primitive execute/verify behavior without live LDAP.
 
 Uses lightweight mock connections and monkeypatching to validate:
   - Required attribute presence on dMSA creation
   - Guard behaviour (no --confirm, no conn)
-  - Automatic rollback on partial primitive failure (steps 2 and 3)
-  - Read-before-write recording for correct rollback
+  - Partial-failure operation state recording
+  - Read-before-write recording for auditing
   - Informational primitive status
   - Dry-run output does not touch LDAP
   - Non-executable path rejection
@@ -72,6 +72,21 @@ class _MockConn:
         return True
 
     def search(self, search_base, search_filter, search_scope, attributes):
+        if attributes == ["objectGUID"] and any(item[0] == search_base for item in self.added):
+            class _GuidAttr:
+                raw_values = [bytes(range(16))]
+                values = []
+                value = None
+
+            class _GuidEntry:
+                def __contains__(self, key):
+                    return key == "objectGUID"
+
+                def __getitem__(self, key):
+                    return _GuidAttr()
+
+            self._entries = [_GuidEntry()]
+            return True
         if self._read_return is not None:
             class _Attr:
                 def __init__(self, vals):
@@ -87,6 +102,7 @@ class _MockConn:
             self._entries = [_Entry(self._read_return, attributes[0] if attributes else "")]
         else:
             self._entries = []
+        return True
 
     @property
     def entries(self):
@@ -263,8 +279,8 @@ def test_postpatch_execute_target_writes(tmp_path, monkeypatch):
     assert state_ch.before is None  # absent before write
 
 
-def test_postpatch_step2_failure_triggers_rollback(tmp_path, monkeypatch):
-    """If the first target-side modify fails, automatic rollback must delete the created dMSA."""
+def test_postpatch_step2_failure_records_partial_state(tmp_path, monkeypatch):
+    """If the first target-side modify fails, keep the created dMSA in the operation log."""
     monkeypatch.chdir(tmp_path)
     prim = PostPatchMutualPairPrimitive()
     # modify call 1 is the first target write; add_object is conn.add(), not conn.modify().
@@ -272,14 +288,15 @@ def test_postpatch_step2_failure_triggers_rollback(tmp_path, monkeypatch):
 
     op = _op(prim.name, container_dn="OU=Test,DC=corp,DC=local", target_dn="CN=svc,DC=corp,DC=local")
 
-    with pytest.raises(PrimitiveError, match="rollback"):
+    with pytest.raises(PrimitiveError, match="partial state"):
         prim.execute(op, confirm=True, conn=conn)
 
     # dMSA was created in step 1.
     assert len(conn.added) == 1
     created_dn = conn.added[0][0]
-    # Rollback must have deleted it.
-    assert created_dn in conn.deleted
+    assert created_dn in op.created_dns
+    assert conn.deleted == []
+    assert op.status == "partial-failed"
 
 
 def test_postpatch_add_failure_preserves_maybe_created_dns(tmp_path, monkeypatch):
@@ -299,20 +316,23 @@ def test_postpatch_add_failure_preserves_maybe_created_dns(tmp_path, monkeypatch
     assert op.maybe_created_dns
 
 
-def test_postpatch_step3_failure_triggers_rollback(tmp_path, monkeypatch):
-    """If the second target-side modify fails, rollback must reverse step 2 and delete the dMSA."""
+def test_postpatch_step3_failure_records_partial_state(tmp_path, monkeypatch):
+    """If the second target-side modify fails, written steps remain recorded."""
     monkeypatch.chdir(tmp_path)
     prim = PostPatchMutualPairPrimitive()
     conn = _FailingConn(fail_on_modify_n=2, read_return=None)
 
     op = _op(prim.name, container_dn="OU=Test,DC=corp,DC=local", target_dn="CN=svc,DC=corp,DC=local")
 
-    with pytest.raises(PrimitiveError, match="rollback"):
+    with pytest.raises(PrimitiveError, match="partial state"):
         prim.execute(op, confirm=True, conn=conn)
 
     assert len(conn.added) == 1
     created_dn = conn.added[0][0]
-    assert created_dn in conn.deleted
+    assert created_dn in op.created_dns
+    assert conn.deleted == []
+    assert op.status == "partial-failed"
+    assert any(change.step_status == "written" for change in op.changed_attrs)
 
 
 def test_postpatch_check():
@@ -419,15 +439,18 @@ def test_existing_dmsa_postpatch_records_before_values(tmp_path, monkeypatch):
     assert link_ch.after_python() == ["CN=svc,DC=corp,DC=local"]
 
 
-def test_existing_dmsa_postpatch_step2_failure_triggers_rollback(tmp_path, monkeypatch):
+def test_existing_dmsa_postpatch_step2_failure_records_partial_state(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     prim = ExistingDmsaPostPatchMutualPrimitive()
     conn = _FailingConn(fail_on_modify_n=2, read_return=None)
+    op = _existing_postpatch_op(prim.name)
 
-    with pytest.raises(PrimitiveError, match="rollback"):
-        prim.execute(_existing_postpatch_op(prim.name), confirm=True, conn=conn)
+    with pytest.raises(PrimitiveError, match="partial state"):
+        prim.execute(op, confirm=True, conn=conn)
 
-    assert len(conn.modified) >= 2
+    assert len(conn.modified) == 1
+    assert op.status == "partial-failed"
+    assert [change.step_status for change in op.changed_attrs] == ["written", "planned"]
 
 
 def test_existing_dmsa_postpatch_missing_dmsa(tmp_path, monkeypatch):
@@ -497,7 +520,6 @@ def test_self_write_map_informational(tmp_path, monkeypatch):
     result = prim.execute(op)
     assert result.status == "informational"
     assert prim.verify(op) is True
-    assert prim.rollback(op) is True
     assert prim.modifies_directory is False
 
 
@@ -508,7 +530,6 @@ def test_self_pkinit_loop_informational(tmp_path, monkeypatch):
     result = prim.execute(op)
     assert result.status == "informational"
     assert prim.verify(op) is True
-    assert prim.rollback(op) is True
     assert prim.modifies_directory is False
 
 
@@ -827,8 +848,8 @@ def test_external_argv_does_not_use_shell(tmp_path, monkeypatch):
         assert argv_calls[0]["shell"] is False, "--external-argv must not use shell=True"
 
 
-def test_external_cmd_warns_about_shell(tmp_path, monkeypatch):
-    """--external-cmd verify must print a warning about shell=True."""
+def test_external_cmd_is_rejected_without_execution(tmp_path, monkeypatch):
+    """Removed generic verification must never execute a supplied command."""
     import subprocess
     monkeypatch.chdir(tmp_path)
 
@@ -838,7 +859,11 @@ def test_external_cmd_warns_about_shell(tmp_path, monkeypatch):
     op = Operation(id="OP-0002", primitive="test", status="executed")
     save_operation(op)
 
-    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: type("R", (), {"returncode": 0})())
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *a, **kw: (_ for _ in ()).throw(AssertionError("must not execute")),
+    )
 
     from typer.testing import CliRunner
     from dmsa_reaper.cli import app
@@ -850,7 +875,8 @@ def test_external_cmd_warns_about_shell(tmp_path, monkeypatch):
         "--mode", "external",
         "--external-cmd", "echo hello",
     ])
-    assert "WARNING" in result.output or "shell=True" in result.output
+    assert result.exit_code != 0
+    assert "external proof modes were removed" in result.output
 
 
 # ── version consistency ───────────────────────────────────────────────────────
@@ -1025,21 +1051,6 @@ def test_dry_run_does_not_create_operation_file(tmp_path, monkeypatch):
 
     # No .reaper directory should have been created.
     assert not (tmp_path / ".reaper").exists(), ".reaper/ must not be created during dry run"
-
-
-# ── rollback _dn_exists LDAPException ────────────────────────────────────────
-
-def test_rollback_dn_exists_returns_false_on_ldap_exception():
-    """rollback._dn_exists must return False when LDAPException is raised."""
-    from ldap3.core.exceptions import LDAPException
-    from dmsa_reaper.ops.rollback import _dn_exists as rollback_dn_exists
-
-    class _RaisingConn:
-        entries = []
-        def search(self, **kwargs):
-            raise LDAPException("noSuchObject")
-
-    assert rollback_dn_exists(_RaisingConn(), "CN=gone,DC=corp,DC=local") is False
 
 
 # ── expand-targets path ID consistency ───────────────────────────────────────

@@ -10,6 +10,7 @@ Raw struct is therefore used for ACE construction to get the layout right.
 from __future__ import annotations
 
 import struct
+import hashlib
 from typing import TYPE_CHECKING
 
 from dmsa_reaper.constants import DACL_SECURITY_INFORMATION
@@ -33,6 +34,10 @@ ACE_INHERITED_OBJECT_TYPE_PRESENT = 0x02
 # ACL revision values (MS-DTYP §2.4.4.1)
 ACL_REVISION = 0x02      # standard ACE types only
 ACL_REVISION_DS = 0x04   # required when object-specific ACEs are present
+
+_INHERITED_ACE = 0x10
+_EXPLICIT_ALLOW_TYPES = frozenset({0x00, 0x05})
+_EXPLICIT_DENY_TYPES = frozenset({0x01, 0x06})
 
 
 def _build_sid_bytes(sid_str: str) -> bytes:
@@ -114,80 +119,165 @@ def build_allow_writeproperty_ace(
         return _build_ace_bytes(ACE_TYPE_ALLOW, 0, inner)
 
 
-def add_aces_to_sd(raw_sd: bytes, new_aces: list[bytes]) -> bytes:
-    """Prepend new_aces to the DACL in raw_sd and return the modified SD bytes.
+def _split_aces(ace_data: bytes, ace_count: int) -> list[bytes]:
+    """Split and validate an ACL's packed ACE sequence."""
+    result: list[bytes] = []
+    offset = 0
+    for index in range(ace_count):
+        if offset + 4 > len(ace_data):
+            raise ValueError(f"ACE {index} header exceeds DACL data")
+        ace_size = struct.unpack_from("<H", ace_data, offset + 2)[0]
+        if ace_size < 4 or offset + ace_size > len(ace_data):
+            raise ValueError(f"ACE {index} has invalid size {ace_size}")
+        result.append(ace_data[offset : offset + ace_size])
+        offset += ace_size
+    if offset != len(ace_data):
+        raise ValueError(
+            f"DACL contains {len(ace_data) - offset} trailing bytes after {ace_count} ACEs"
+        )
+    return result
 
-    Operates on the raw self-relative SD binary (MS-DTYP §2.4.6).
-    The DACL header offsets are updated accordingly.  If any of the new ACEs is an
-    object ACE (type 0x05), the ACL revision is upgraded to ACL_REVISION_DS (4).
-    """
+
+def ace_fingerprint(ace: bytes) -> str:
+    """Return the exact journal fingerprint used for conflict-safe cleanup."""
+    return hashlib.sha256(ace).hexdigest()
+
+
+def _canonical_rank(ace: bytes) -> int:
+    if len(ace) < 4:
+        raise ValueError("ACE is too short")
+    if ace[1] & _INHERITED_ACE:
+        return 2
+    if ace[0] in _EXPLICIT_DENY_TYPES:
+        return 0
+    if ace[0] in _EXPLICIT_ALLOW_TYPES:
+        return 1
+    raise ValueError(
+        f"unsupported explicit DACL ACE type 0x{ace[0]:02x}; refusing to recanonicalize it"
+    )
+
+
+def _dacl_parts(raw_sd: bytes) -> tuple[int, int, int, int, int, list[bytes]]:
     if len(raw_sd) < 20:
         raise ValueError(f"SD too short: {len(raw_sd)} bytes")
-
-    # SD header (self-relative, 20 bytes):
-    #   Revision(1) Sbz1(1) Control(2) OffsetOwner(4) OffsetGroup(4) OffsetSacl(4) OffsetDacl(4)
     offset_dacl = struct.unpack_from("<I", raw_sd, 16)[0]
-
     if offset_dacl == 0:
         raise ValueError("SD has no DACL (OffsetDacl = 0)")
     if offset_dacl + 8 > len(raw_sd):
         raise ValueError(f"OffsetDacl {offset_dacl} leaves no room for DACL header")
-
-    # DACL (ACL) header: AclRevision(1) Sbz1(1) AclSize(2) AceCount(2) Sbz2(2) = 8 bytes
-    acl_rev, acl_sbz1, old_acl_size, old_ace_count, acl_sbz2 = struct.unpack_from(
+    acl_rev, acl_sbz1, acl_size, ace_count, acl_sbz2 = struct.unpack_from(
         "<BBHHH", raw_sd, offset_dacl
     )
-
-    if offset_dacl + old_acl_size > len(raw_sd):
+    if acl_size < 8 or offset_dacl + acl_size > len(raw_sd):
         raise ValueError(
-            f"DACL AclSize {old_acl_size} at offset {offset_dacl} "
-            f"exceeds SD length {len(raw_sd)}"
+            f"DACL AclSize {acl_size} at offset {offset_dacl} exceeds SD length {len(raw_sd)}"
         )
+    ace_data = raw_sd[offset_dacl + 8 : offset_dacl + acl_size]
+    return offset_dacl, acl_rev, acl_sbz1, acl_sbz2, acl_size, _split_aces(ace_data, ace_count)
 
-    # Extract existing ACE bytes (everything between DACL header and end of DACL)
-    existing_aces = raw_sd[offset_dacl + 8 : offset_dacl + old_acl_size]
-    # Extract any bytes that come AFTER the DACL (rare but possible)
-    after_dacl = raw_sd[offset_dacl + old_acl_size :]
 
-    # Build new DACL
-    combined_new_aces = b"".join(new_aces)
-    new_ace_data = combined_new_aces + existing_aces
-    new_ace_count = old_ace_count + len(new_aces)
-    new_acl_size = 8 + len(new_ace_data)
+def _replace_dacl_aces(
+    raw_sd: bytes,
+    *,
+    offset_dacl: int,
+    acl_rev: int,
+    acl_sbz1: int,
+    acl_sbz2: int,
+    old_acl_size: int,
+    aces: list[bytes],
+) -> bytes:
+    ace_data = b"".join(aces)
+    new_acl_size = 8 + len(ace_data)
     size_delta = new_acl_size - old_acl_size
-
-    # Upgrade ACL revision to DS if any new ACE is an object ACE (MS-DTYP §2.4.4.1).
-    has_object_ace = any(len(ace) > 0 and ace[0] == ACE_TYPE_ALLOW_OBJECT for ace in new_aces)
+    has_object_ace = any(ace and ace[0] in {0x05, 0x06} for ace in aces)
     new_acl_rev = max(acl_rev, ACL_REVISION_DS) if has_object_ace else acl_rev
-
     new_dacl = (
-        struct.pack("<BBHHH", new_acl_rev, acl_sbz1, new_acl_size, new_ace_count, acl_sbz2)
-        + new_ace_data
+        struct.pack("<BBHHH", new_acl_rev, acl_sbz1, new_acl_size, len(aces), acl_sbz2)
+        + ace_data
     )
-
-    # Rebuild SD header, adjusting offsets of any sections that come AFTER the DACL
     sd_header = bytearray(raw_sd[:20])
-    for off_field in (4, 8, 12):  # OffsetOwner, OffsetGroup, OffsetSacl
+    for off_field in (4, 8, 12):
         ptr = struct.unpack_from("<I", bytes(sd_header), off_field)[0]
         if ptr > offset_dacl:
             struct.pack_into("<I", sd_header, off_field, ptr + size_delta)
-    # OffsetDacl does not change (DACL starts at the same position)
+    before_dacl = raw_sd[20:offset_dacl]
+    after_dacl = raw_sd[offset_dacl + old_acl_size :]
+    return bytes(sd_header) + before_dacl + new_dacl + after_dacl
 
-    # Preserve everything between the 20-byte header and the DACL start
-    before_dacl_content = raw_sd[20:offset_dacl]
 
-    return bytes(sd_header) + before_dacl_content + new_dacl + after_dacl
+def add_aces_to_sd(raw_sd: bytes, new_aces: list[bytes]) -> bytes:
+    """Insert explicit allow ACEs canonically and return the modified SD.
+
+    Existing ACE order is preserved.  The input DACL must already be canonical;
+    new explicit allows are placed after existing explicit allows and before all
+    inherited ACEs.  Refusing noncanonical or duplicate input avoids silently
+    changing Windows AccessCheck behavior and makes exact cleanup unambiguous.
+    """
+    parts = _dacl_parts(raw_sd)
+    offset_dacl, acl_rev, acl_sbz1, acl_sbz2, old_acl_size, existing = parts
+    ranks = [_canonical_rank(ace) for ace in existing]
+    if ranks != sorted(ranks):
+        raise ValueError("existing DACL is noncanonical; refusing to add an ACE")
+    unique_new = list(dict.fromkeys(new_aces))
+    if any(_canonical_rank(ace) != 1 for ace in unique_new):
+        raise ValueError("only explicit allow ACE insertion is supported")
+    existing_fingerprints = {ace_fingerprint(ace) for ace in existing}
+    duplicates = [ace_fingerprint(ace) for ace in unique_new if ace_fingerprint(ace) in existing_fingerprints]
+    if duplicates:
+        raise ValueError("requested ACE already exists; exact cleanup would be ambiguous")
+    inherited_at = next((i for i, rank in enumerate(ranks) if rank == 2), len(existing))
+    combined = existing[:inherited_at] + unique_new + existing[inherited_at:]
+    return _replace_dacl_aces(
+        raw_sd,
+        offset_dacl=offset_dacl,
+        acl_rev=acl_rev,
+        acl_sbz1=acl_sbz1,
+        acl_sbz2=acl_sbz2,
+        old_acl_size=old_acl_size,
+        aces=combined,
+    )
+
+
+def remove_aces_by_fingerprint(raw_sd: bytes, fingerprints: list[str]) -> tuple[bytes, list[str]]:
+    """Remove exactly one ACE for each recorded SHA-256 fingerprint.
+
+    Returns ``(new_sd, missing)``.  Missing or duplicate journal targets are
+    conflicts: no potentially third-party ACE is guessed or removed.
+    """
+    parts = _dacl_parts(raw_sd)
+    offset_dacl, acl_rev, acl_sbz1, acl_sbz2, old_acl_size, existing = parts
+    remaining = list(existing)
+    missing: list[str] = []
+    for fingerprint in fingerprints:
+        matches = [i for i, ace in enumerate(remaining) if ace_fingerprint(ace) == fingerprint]
+        if len(matches) != 1:
+            missing.append(fingerprint)
+            continue
+        remaining.pop(matches[0])
+    if missing:
+        return raw_sd, missing
+    return _replace_dacl_aces(
+        raw_sd,
+        offset_dacl=offset_dacl,
+        acl_rev=acl_rev,
+        acl_sbz1=acl_sbz1,
+        acl_sbz2=acl_sbz2,
+        old_acl_size=old_acl_size,
+        aces=remaining,
+    ), []
 
 
 def read_sd(conn: "Connection", dn: str) -> bytes:
     """Read the raw nTSecurityDescriptor bytes for a DN using the DACL SD control."""
-    conn.search(
+    ok = conn.search(
         search_base=dn,
         search_filter="(objectClass=*)",
         search_scope="BASE",
         attributes=["nTSecurityDescriptor"],
         controls=sd_control(DACL_SECURITY_INFORMATION),
     )
+    from dmsa_reaper.ldap.query import ensure_search_succeeded
+    ensure_search_succeeded(conn, ok, f"read nTSecurityDescriptor for {dn!r}")
     if not conn.entries:
         raise RuntimeError(f"Object not found: {dn}")
     entry = conn.entries[0]

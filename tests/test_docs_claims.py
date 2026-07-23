@@ -6,17 +6,17 @@ def test_readme_auth_claims_are_explicit_and_limited():
 
     assert "password bind" in readme
     assert "LDAPS" in readme
-    assert "environment Kerberos through ldap3 SASL/GSSAPI" in readme
-    assert "robust Impacket-style pass-the-hash" in readme
-    assert "native Kerberos ticket handling" in readme
+    assert "SASL/GSSAPI" in readme
+    assert "pass-the-hash" in readme
+    assert "not yet supported consistently for ldap" in readme.lower()
+    assert "ticket` runs Impacket's dMSA exchange" in readme
 
 
-def test_readme_documents_channel_binding_placeholders():
+def test_readme_does_not_advertise_placeholder_security_checks():
     readme = Path("README.md").read_text(encoding="utf-8")
 
-    assert "channel_binding_status" in readme
-    assert "placeholders" in readme
-    assert "unknown" in readme
+    assert "channel_binding_status" not in readme
+    assert "placeholder/detected" not in readme
 
 
 def test_docs_state_ldap_verification_is_not_kerberos_verification():

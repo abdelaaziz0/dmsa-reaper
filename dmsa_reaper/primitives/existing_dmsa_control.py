@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, Any
 from dmsa_reaper.ldap.modify import modify_attribute
 from dmsa_reaper.models import AttributeChange, AttributeValue, Operation, PathCandidate
 from dmsa_reaper.ops.operation_log import new_operation, save_operation
-from dmsa_reaper.ops.rollback import rollback_operation
 from dmsa_reaper.ops.verify import verify_operation_ldap
 from dmsa_reaper.primitives._ldap_helpers import (
     DMSA_STATE_COMPLETED,
@@ -121,9 +120,7 @@ class ExistingDmsaLegacyLinkPrimitive(Primitive):
             operation.errors.append(f"existing dmsa legacy write {dmsa_dn}: {exc}")
             operation.metadata["execute_error"] = str(exc)
             save_operation(operation)
-            rollback_operation(operation, conn=conn)
-            save_operation(operation)
-            raise PrimitiveError(f"Execute failed - automatic rollback triggered: {exc}") from exc
+            raise PrimitiveError(f"Execute failed; partial state is recorded: {exc}") from exc
 
         operation.status = "executed"
         save_operation(operation)
@@ -131,11 +128,6 @@ class ExistingDmsaLegacyLinkPrimitive(Primitive):
 
     def verify(self, operation: Operation, *, conn: "Connection | None" = None) -> bool:
         return verify_operation_ldap(operation, conn=conn)
-
-    def rollback(self, operation: Operation, *, conn: "Connection | None" = None) -> bool:
-        operation = rollback_operation(operation, conn=conn)
-        save_operation(operation)
-        return operation.status == "rolled-back"
 
     def dry_run_steps(self, operation: Operation) -> list[str]:
         meta = operation.metadata
@@ -147,13 +139,11 @@ class ExistingDmsaLegacyLinkPrimitive(Primitive):
             "",
             f"STEP 1  MODIFY  {dmsa_dn}",
             f"  msDS-ManagedAccountPrecededByLink       -> {target_dn}",
-            "  (current value will be read and recorded for rollback)",
+            "  (current value will be recorded before the write)",
             "",
             f"STEP 2  MODIFY  {dmsa_dn}",
             f"  msDS-DelegatedMSAState                  -> {DMSA_STATE_COMPLETED}  (migration-completed)",
-            "  (current value will be read and recorded for rollback)",
-            "",
-            "ROLLBACK: restore both dMSA-side attributes from recorded before-values",
+            "  (current value will be recorded before the write)",
         ]
 
 
@@ -242,9 +232,7 @@ class ExistingDmsaPostPatchMutualPrimitive(Primitive):
             operation.errors.append(f"existing dmsa postpatch write {dmsa_dn} -> {target_dn}: {exc}")
             operation.metadata["execute_error"] = str(exc)
             save_operation(operation)
-            rollback_operation(operation, conn=conn)
-            save_operation(operation)
-            raise PrimitiveError(f"Execute failed - automatic rollback triggered: {exc}") from exc
+            raise PrimitiveError(f"Execute failed; partial state is recorded: {exc}") from exc
 
         operation.status = "executed"
         save_operation(operation)
@@ -253,11 +241,6 @@ class ExistingDmsaPostPatchMutualPrimitive(Primitive):
     def verify(self, operation: Operation, *, conn: "Connection | None" = None) -> bool:
         return verify_operation_ldap(operation, conn=conn)
 
-    def rollback(self, operation: Operation, *, conn: "Connection | None" = None) -> bool:
-        operation = rollback_operation(operation, conn=conn)
-        save_operation(operation)
-        return operation.status == "rolled-back"
-
     def dry_run_steps(self, operation: Operation) -> list[str]:
         meta = operation.metadata
         dmsa_dn = resolve_meta(meta, "dmsa_dn") or "<dmsa_dn>"
@@ -265,21 +248,19 @@ class ExistingDmsaPostPatchMutualPrimitive(Primitive):
         return [
             f"STEP 1  MODIFY  {dmsa_dn}",
             f"  msDS-ManagedAccountPrecededByLink       -> {target_dn}",
-            "  (current value will be read and recorded for rollback)",
+            "  (current value will be recorded before the write)",
             "",
             f"STEP 2  MODIFY  {dmsa_dn}",
             f"  msDS-DelegatedMSAState                  -> {DMSA_STATE_COMPLETED}  (migration-completed)",
-            "  (current value will be read and recorded for rollback)",
+            "  (current value will be recorded before the write)",
             "",
             f"STEP 3  MODIFY  {target_dn}",
             f"  msDS-SupersededManagedAccountLink       -> {dmsa_dn}",
-            "  (current value will be read and recorded for rollback)",
+            "  (current value will be recorded before the write)",
             "",
             f"STEP 4  MODIFY  {target_dn}",
             f"  msDS-SupersededServiceAccountState      -> {_STATE_ACTIVE}",
-            "  (current value will be read and recorded for rollback)",
-            "",
-            "ROLLBACK: restore target-side attrs, then dMSA-side attrs from recorded before-values",
+            "  (current value will be recorded before the write)",
         ]
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import ssl
 
 from ldap3 import NONE, NTLM, SASL, KERBEROS, Connection, Server, Tls
 
@@ -14,6 +15,7 @@ class LdapAuthConfig:
     password: str | None = None
     kerberos: bool = False
     use_ldaps: bool = False
+    start_tls: bool = False
     port: int | None = None
     timeout: int = 10
     tls_validate: bool = False
@@ -26,7 +28,7 @@ class LdapBindError(RuntimeError):
 def build_server(config: LdapAuthConfig) -> Server:
     host = config.dc_host or config.dc_ip or config.domain
     port = config.port or (636 if config.use_ldaps else 389)
-    tls = Tls(validate=0) if config.use_ldaps and not config.tls_validate else None
+    tls = Tls(validate=ssl.CERT_REQUIRED if config.tls_validate else ssl.CERT_NONE)
 
     # Important:
     # Do NOT load server schema here.
@@ -39,11 +41,13 @@ def build_server(config: LdapAuthConfig) -> Server:
         use_ssl=config.use_ldaps,
         get_info=NONE,
         connect_timeout=config.timeout,
-        tls=tls,
+        tls=tls if (config.use_ldaps or config.start_tls) else None,
     )
 
 
 def bind(config: LdapAuthConfig) -> Connection:
+    if config.use_ldaps and config.start_tls:
+        raise LdapBindError("LDAPS and STARTTLS are mutually exclusive")
     server = build_server(config)
 
     common_kwargs = {
@@ -73,6 +77,12 @@ def bind(config: LdapAuthConfig) -> Connection:
         )
     else:
         conn = Connection(server, **common_kwargs)
+
+    if config.start_tls:
+        if not conn.open():
+            raise LdapBindError(f"LDAP connection failed before STARTTLS: {conn.result}")
+        if not conn.start_tls():
+            raise LdapBindError(f"LDAP STARTTLS failed: {conn.result}")
 
     if not conn.bind():
         raise LdapBindError(f"LDAP bind failed: {conn.result}")

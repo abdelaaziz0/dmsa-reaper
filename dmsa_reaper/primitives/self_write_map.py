@@ -44,9 +44,6 @@ class SelfWriteMapPrimitive(Primitive):
     def verify(self, operation: Operation, *, conn: "Connection | None" = None) -> bool:
         return True
 
-    def rollback(self, operation: Operation, *, conn: "Connection | None" = None) -> bool:
-        return True
-
     def dry_run_steps(self, operation: Operation) -> list[str]:
         return [
             "[self-write-map] informational — no LDAP writes",
