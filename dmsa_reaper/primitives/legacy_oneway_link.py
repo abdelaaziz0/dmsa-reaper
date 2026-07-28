@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING
 from dmsa_reaper.ldap.modify import add_object
 from dmsa_reaper.models import Operation, PathCandidate
 from dmsa_reaper.ops.operation_log import new_operation, save_operation
-from dmsa_reaper.ops.verify import verify_operation_ldap
 from dmsa_reaper.primitives._ldap_helpers import (
     DMSA_MANAGED_PASSWORD_INTERVAL,
     DMSA_OBJECT_CLASSES,
@@ -25,7 +24,7 @@ if TYPE_CHECKING:
 class LegacyOneWayLinkPrimitive(Primitive):
     """Create a new dMSA and set msDS-ManagedAccountPrecededByLink to point at a target.
 
-    Pre-CVE-2025-53779 (unpatched / lab / CTF) path.  The link is established
+    Pre-CVE-2025-53779 (unpatched) path. The link is established
     at creation time so there is only one LDAP write.
 
     Requires:
@@ -110,9 +109,6 @@ class LegacyOneWayLinkPrimitive(Primitive):
         save_operation(operation)
         return operation
 
-    def verify(self, operation: Operation, *, conn: "Connection | None" = None) -> bool:
-        return verify_operation_ldap(operation, conn=conn)
-
     def dry_run_steps(self, operation: Operation) -> list[str]:
         meta = operation.metadata
         container_dn = resolve_meta(meta, "container_dn") or "<container_dn>"
@@ -121,7 +117,7 @@ class LegacyOneWayLinkPrimitive(Primitive):
         new_dn = dmsa_dn(cn, container_dn)
         sam = f"{cn}$"
         return [
-            "WARNING: This only validates legacy/pre-patch behavior. "
+            "WARNING: This targets legacy/pre-patch behavior. "
             "Patched KDCs may accept LDAP writes but refuse ticket semantics.",
             "",
             f"CREATE  {new_dn}",

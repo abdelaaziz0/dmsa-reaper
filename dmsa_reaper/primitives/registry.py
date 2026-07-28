@@ -9,8 +9,6 @@ from dmsa_reaper.primitives.existing_dmsa_control import (
 )
 from dmsa_reaper.primitives.legacy_oneway_link import LegacyOneWayLinkPrimitive
 from dmsa_reaper.primitives.postpatch_mutual_pair import PostPatchMutualPairPrimitive
-from dmsa_reaper.primitives.self_pkinit_loop import SelfPkinitLoopPrimitive
-from dmsa_reaper.primitives.self_write_map import SelfWriteMapPrimitive
 
 
 def get_primitives() -> dict[str, Primitive]:
@@ -21,7 +19,5 @@ def get_primitives() -> dict[str, Primitive]:
         LegacyOneWayLinkPrimitive(),
         DaclContainerEscalatePrimitive(),
         DaclTargetEscalatePrimitive(),
-        SelfWriteMapPrimitive(),
-        SelfPkinitLoopPrimitive(),
     ]
     return {p.name: p for p in primitives}

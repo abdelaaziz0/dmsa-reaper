@@ -28,10 +28,7 @@ def print_paths(paths: list[PathCandidate]) -> None:
     for p in paths:
         conf_style = _CONFIDENCE_STYLE.get(p.confidence, "")
         rights_summary = "\n".join(p.required_rights) if p.required_rights else "-"
-        if not p.executable and p.primitive in {"self-write-map", "self-pkinit-loop"}:
-            exec_col = "[cyan]info[/cyan]"
-        else:
-            exec_col = "[green]yes[/green]" if p.executable else "[red]no[/red]"
+        exec_col = "[green]yes[/green]" if p.executable else "[red]no[/red]"
 
         # Build the Target/dMSA cell.
         if p.target_dn:
@@ -42,7 +39,7 @@ def print_paths(paths: list[PathCandidate]) -> None:
             if p.candidate_targets_count:
                 target_col = (
                     f"[dim]needs --target-dn "
-                    f"({p.candidate_targets_count} candidate(s) — use --expand-targets)[/dim]"
+                    f"({p.candidate_targets_count} candidate(s))[/dim]"
                 )
             else:
                 target_col = "[dim]needs --target-dn[/dim]"

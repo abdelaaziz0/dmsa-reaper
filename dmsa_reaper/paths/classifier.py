@@ -5,20 +5,6 @@ import json
 
 from dmsa_reaper.models import CheckStatus, Confidence, MapState, PathCandidate
 
-# Rights that are interesting on a dMSA object for informational self-write
-# mapping. These are not all sufficient for the existing-dMSA migration-link
-# primitives below.
-_DANGEROUS_DMSA_RIGHTS = frozenset({
-    "GenericAll",
-    "GenericWrite",
-    "WriteDACL",
-    "WriteOwner",
-    "WriteProperty:msDS-KeyCredentialLink",
-    "WriteProperty:msDS-GroupMSAMembership",
-    "WriteProperty:msDS-ManagedAccountPrecededByLink",
-    "WriteProperty:msDS-DelegatedMSAState",
-})
-
 _DMSA_MIGRATION_ATTR_RIGHTS = frozenset({
     "WriteProperty:msDS-ManagedAccountPrecededByLink",
     "WriteProperty:msDS-DelegatedMSAState",
@@ -34,17 +20,6 @@ _CREATE_DMSA_RIGHTS = frozenset({"CreateChild:dMSA", "CreateChild", "GenericAll"
 # unless execution also performs and later restores an ownership transition,
 # which these primitives deliberately do not do.
 _DACL_CONTROL_RIGHTS = frozenset({"WriteDACL", "GenericAll"})
-
-# Self-write surfaces used for self-pkinit-loop detection (evaluated on self_rights).
-_SELF_KEY_CRED_RIGHTS = frozenset({
-    "GenericAll", "WriteProperty:msDS-KeyCredentialLink",
-})
-_SELF_GMSA_RIGHTS = frozenset({
-    "GenericAll", "WriteProperty:msDS-GroupMSAMembership",
-})
-
-# Self-write surfaces that make self-write-map relevant.
-_SELF_WRITE_SURFACE = _DANGEROUS_DMSA_RIGHTS
 
 # Target attributes required on the target object for the postpatch path.
 _POSTPATCH_TARGET_ATTRS = frozenset({
@@ -94,8 +69,7 @@ def _is_sensitive_legacy_target(target, current_principal_sid: str | None) -> bo
       - The current operator's own account (to avoid self-targeting).
       - Domain controller objects (identified by standard DC OU placement).
 
-    Operators can expand the target set with --target-filter at map time, or
-    use --expand-targets to see what targets remain after filtering.
+    Operators can expand the target set with --target-filter at map time.
     """
     if target.sid:
         rid = _rid_from_sid(target.sid)
@@ -141,7 +115,10 @@ def classify_paths(state: MapState, *, expand_targets: bool = False) -> list[Pat
     idx = 1
 
     dmsa_capable = state.environment.dmsa_capable_status == CheckStatus.present
-    dmsa_maybe = state.environment.dmsa_capable_status == CheckStatus.unknown
+    dmsa_maybe = state.environment.dmsa_capable_status not in {
+        CheckStatus.present,
+        CheckStatus.absent,
+    }
 
     # Determine confidence and environment warnings based on capability status.
     if dmsa_capable:
@@ -224,7 +201,7 @@ def classify_paths(state: MapState, *, expand_targets: bool = False) -> list[Pat
     # 2. existing-dmsa-postpatch-mutual                                    #
     #    Requires: exact dMSA migration writes plus target-side attrs      #
     # ------------------------------------------------------------------ #
-    for dmsa in state.dmsas:
+    for dmsa in (state.dmsas if emit else []):
         right_names = {r.right for r in dmsa.rights}
         if not _has_dmsa_migration_write(right_names):
             continue
@@ -251,7 +228,8 @@ def classify_paths(state: MapState, *, expand_targets: bool = False) -> list[Pat
                         ),
                         requires_modify_dmsa=True,
                         requires_modify_target=True,
-                        confidence=Confidence.high,
+                        confidence=_base_confidence,
+                        environment_warnings=_env_warn,
                     ))
                     idx += 1
             else:
@@ -271,7 +249,8 @@ def classify_paths(state: MapState, *, expand_targets: bool = False) -> list[Pat
                     requires_modify_target=True,
                     requires_operator_target=True,
                     candidate_targets_count=len(viable_targets),
-                    confidence=Confidence.high,
+                    confidence=_base_confidence,
+                    environment_warnings=_env_warn,
                 ))
                 idx += 1
 
@@ -283,13 +262,15 @@ def classify_paths(state: MapState, *, expand_targets: bool = False) -> list[Pat
             required_rights=sorted(migration_rights),
             requires_modify_dmsa=True,
             requires_operator_target=True,
-            confidence=Confidence.medium,
-            verification_modes=["ldap"],
+            confidence=(
+                Confidence.low if dmsa_maybe else Confidence.medium
+            ),
+            environment_warnings=_env_warn,
         ))
         idx += 1
 
     # ------------------------------------------------------------------ #
-    # 3. legacy-oneway-link  (unpatched / pre-CVE-2025-53779 / lab/CTF)   #
+    # 3. legacy-oneway-link  (unpatched / pre-CVE-2025-53779)             #
     #    Requires: CreateChild:dMSA on container; no target-side write     #
     # ------------------------------------------------------------------ #
     if emit:
@@ -321,9 +302,10 @@ def classify_paths(state: MapState, *, expand_targets: bool = False) -> list[Pat
                         requires_create_dmsa=True,
                         requires_modify_dmsa=True,
                         requires_modify_target=False,
-                        confidence=Confidence.medium,
+                        confidence=(
+                            Confidence.low if dmsa_maybe else Confidence.medium
+                        ),
                         environment_warnings=_env_warn,
-                        verification_modes=["ldap"],
                     ))
                     idx += 1
             else:
@@ -342,61 +324,15 @@ def classify_paths(state: MapState, *, expand_targets: bool = False) -> list[Pat
                         requires_modify_target=False,
                         requires_operator_target=True,
                         candidate_targets_count=len(safe_targets),
-                        confidence=Confidence.medium,
+                        confidence=(
+                            Confidence.low if dmsa_maybe else Confidence.medium
+                        ),
                         environment_warnings=_env_warn,
-                        verification_modes=["ldap"],
                     ))
                     idx += 1
 
     # ------------------------------------------------------------------ #
-    # 4. self-write-map                                                    #
-    #    After dMSA control: what can the dMSA write to itself?           #
-    #    Evaluated on self_rights (dmsa.sid acting as itself, is_self=True) #
-    # ------------------------------------------------------------------ #
-    for dmsa in state.dmsas:
-        self_right_names = {r.right for r in dmsa.self_rights}
-        if not self_right_names & _SELF_WRITE_SURFACE:
-            continue
-        paths.append(PathCandidate(
-            id=f"P-{idx:04d}",
-            primitive="self-write-map",
-            principal=dmsa.sid or "unknown",
-            dmsa_dn=dmsa.dn,
-            required_rights=sorted(self_right_names & _SELF_WRITE_SURFACE),
-            requires_modify_dmsa=True,
-            executable=False,
-            confidence=Confidence.medium,
-        ))
-        idx += 1
-
-    # ------------------------------------------------------------------ #
-    # 5. self-pkinit-loop  (candidate — Ouroboros technique)              #
-    #    Requires: dMSA can write msDS-KeyCredentialLink AND               #
-    #              msDS-GroupMSAMembership on itself (via self_rights)     #
-    # ------------------------------------------------------------------ #
-    for dmsa in state.dmsas:
-        self_right_names = {r.right for r in dmsa.self_rights}
-        has_key_cred = bool(self_right_names & _SELF_KEY_CRED_RIGHTS)
-        has_gmsa = bool(self_right_names & _SELF_GMSA_RIGHTS)
-        if not (has_key_cred and has_gmsa):
-            continue
-        paths.append(PathCandidate(
-            id=f"P-{idx:04d}",
-            primitive="self-pkinit-loop",
-            principal=dmsa.sid or "unknown",
-            dmsa_dn=dmsa.dn,
-            required_rights=[
-                "WriteProperty:msDS-KeyCredentialLink (self)",
-                "WriteProperty:msDS-GroupMSAMembership (self)",
-            ],
-            requires_modify_dmsa=True,
-            executable=False,
-            confidence=Confidence.medium,
-        ))
-        idx += 1
-
-    # ------------------------------------------------------------------ #
-    # 6. dacl-container-escalate                                          #
+    # 4. dacl-container-escalate                                          #
     #    Operator has WriteDACL on a container but lacks                   #
     #    CreateChild:dMSA.  They can modify the container DACL first,      #
     #    then follow the postpatch or legacy path.                         #
@@ -427,31 +363,43 @@ def classify_paths(state: MapState, *, expand_targets: bool = False) -> list[Pat
             idx += 1
 
     # ------------------------------------------------------------------ #
-    # 7. dacl-target-escalate                                             #
+    # 5. dacl-target-escalate                                             #
     #    Operator has WriteDACL on a target but lacks the                  #
     #    required target-side WriteProperty attributes.  They can modify   #
     #    the target DACL first, then use the postpatch path.              #
     # ------------------------------------------------------------------ #
     if emit:
+        create_containers = [
+            container
+            for container in state.containers
+            if {right.right for right in container.rights} & _CREATE_DMSA_RIGHTS
+        ]
         for target in state.targets:
             right_names = {r.right for r in target.rights}
             has_dacl_ctrl = bool(right_names & _DACL_CONTROL_RIGHTS)
             already_has_attrs = _POSTPATCH_TARGET_ATTRS.issubset(set(target.writable_attrs))
             if not has_dacl_ctrl or already_has_attrs:
                 continue
-            paths.append(PathCandidate(
-                id=f"P-{idx:04d}",
-                primitive="dacl-target-escalate",
-                principal=_principal_from_rights(target.rights),
-                target_dn=target.dn,
-                required_rights=sorted(right_names & _DACL_CONTROL_RIGHTS),
-                requires_modify_target=True,
-                requires_modify_target_dacl=True,
-                executable=True,
-                confidence=Confidence.low,
-                environment_warnings=_env_warn,
-            ))
-            idx += 1
+            for container in create_containers:
+                paths.append(PathCandidate(
+                    id=f"P-{idx:04d}",
+                    primitive="dacl-target-escalate",
+                    principal=_principal_from_rights(target.rights),
+                    container_dn=container.dn,
+                    target_dn=target.dn,
+                    required_rights=sorted(
+                        (right_names & _DACL_CONTROL_RIGHTS)
+                        | {"CreateChild:dMSA on container"}
+                    ),
+                    requires_create_dmsa=True,
+                    requires_modify_dmsa=True,
+                    requires_modify_target=True,
+                    requires_modify_target_dacl=True,
+                    executable=True,
+                    confidence=Confidence.low,
+                    environment_warnings=_env_warn,
+                ))
+                idx += 1
 
     guid_by_dn: dict[str, str | None] = {}
     guid_by_dn.update({obj.dn.lower(): obj.object_guid for obj in state.containers})

@@ -17,7 +17,6 @@ def compute_effective_rights(
     dmsa_class_guid: str | None = None,
     attr_guids: dict[str, str] | None = None,
     side: str = "any",
-    is_self: bool = False,
     null_dacl: bool = False,
 ) -> tuple[list[Right], list[str]]:
     """Compute Rights held by the principal on one AD object.
@@ -31,7 +30,6 @@ def compute_effective_rights(
         dmsa_class_guid: Schema GUID for the dMSA class (enables CreateChild:dMSA detection).
         attr_guids: Mapping of attribute ldap-display-name → schema GUID.
         side: Filter attribute checks to "dmsa", "target", or "any" (default).
-        is_self: True when the principal IS the object (e.g. dMSA evaluating itself).
 
     Returns:
         (rights, writable_attrs)
@@ -58,7 +56,6 @@ def compute_effective_rights(
             object_type_guid=guid,
             owner_sid=owner_sid,
             owner_rights_restricted=or_restricted,
-            is_self=is_self,
         )
 
     def _add(right_name: str, attr: str | None = None, guid: str | None = None) -> None:

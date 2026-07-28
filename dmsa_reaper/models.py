@@ -23,10 +23,6 @@ class CheckStatus(str, Enum):
     error = "error"
 
 
-def _status_from_bool(value: Any) -> CheckStatus:
-    return CheckStatus.present if bool(value) else CheckStatus.absent
-
-
 def _utc_now_iso() -> str:
     return (
         datetime.now(timezone.utc)
@@ -38,7 +34,6 @@ def _utc_now_iso() -> str:
 
 class Environment(BaseModel):
     domain: str | None = None
-    forest: str | None = None
     default_nc: str | None = None
     config_nc: str | None = None
     schema_nc: str | None = None
@@ -46,48 +41,34 @@ class Environment(BaseModel):
     server_2025_dc_status: CheckStatus = CheckStatus.unknown
     kds_root_key_status: CheckStatus = CheckStatus.unknown
     dmsa_capable_status: CheckStatus = CheckStatus.unknown
-    ldap_signing_status: CheckStatus = CheckStatus.unknown
-    ldaps_status: CheckStatus = CheckStatus.unknown
-    channel_binding_status: CheckStatus = CheckStatus.unknown
-    # Compatibility booleans kept for older fixtures and path classifiers. New
-    # map output should prefer the status fields above.
-    has_dmsa_schema: bool = False
-    has_server_2025_dc: bool = False
-    has_kds_root_key: bool = False
-    dmsa_capable: bool = False
-    dcs: list[dict[str, Any]] = Field(default_factory=list)
     mapped_dc_host: str | None = None
     mapped_dc_ip: str | None = None
 
     @model_validator(mode="before")
     @classmethod
-    def _sync_status_fields(cls, data: Any) -> Any:
+    def _load_legacy_statuses(cls, data: Any) -> Any:
         if not isinstance(data, dict):
             return data
-        pairs = (
+        legacy = (
             ("has_dmsa_schema", "dmsa_schema_status"),
             ("has_server_2025_dc", "server_2025_dc_status"),
             ("has_kds_root_key", "kds_root_key_status"),
             ("dmsa_capable", "dmsa_capable_status"),
         )
-        for bool_field, status_field in pairs:
-            if status_field not in data and bool_field in data:
-                data[status_field] = _status_from_bool(data[bool_field]).value
-            if bool_field not in data and status_field in data:
-                data[bool_field] = data[status_field] == CheckStatus.present.value
+        for old_name, status_name in legacy:
+            if status_name not in data and old_name in data:
+                data[status_name] = (
+                    CheckStatus.present.value
+                    if data[old_name]
+                    else CheckStatus.absent.value
+                )
         return data
 
 
 class SchemaCache(BaseModel):
-    schema_nc: str | None = None
-    config_nc: str | None = None
-    object_version: int | None = None
     dmsa_class_guid: str | None = None
-    dmsa_class_guid_source: str | None = None
+    dmsa_class_guid_resolved: bool = False
     attr_guids: dict[str, str] = Field(default_factory=dict)
-    attr_guid_sources: dict[str, str] = Field(default_factory=dict)
-    search_flags: dict[str, int] = Field(default_factory=dict)
-    confidential_attrs: list[str] = Field(default_factory=list)
 
 
 class Principal(BaseModel):
@@ -112,17 +93,10 @@ class DmsaObject(BaseModel):
     sam: str | None = None
     sid: str | None = None
     state: int | None = None
-    group_msa_membership_raw_b64: str | None = None
     preceded_by: str | None = None
     superseded_link: str | None = None
-    key_credential_link_present: bool = False
     owner_sid: str | None = None
-    # rights: what the current operator can do TO this dMSA.
     rights: list[Right] = Field(default_factory=list)
-    # self_rights: what the dMSA principal can do TO ITSELF (evaluated with
-    # principal_sids={dmsa.sid} and is_self=True). Used for self-write-map
-    # and self-pkinit-loop classification.
-    self_rights: list[Right] = Field(default_factory=list)
     parse_warnings: list[str] = Field(default_factory=list)
 
 
@@ -147,15 +121,6 @@ class TargetObject(BaseModel):
     parse_warnings: list[str] = Field(default_factory=list)
 
 
-class Finding(BaseModel):
-    id: str
-    primitive: str
-    principal: str
-    object_dn: str
-    rights: list[str] = Field(default_factory=list)
-    confidence: Confidence = Confidence.medium
-
-
 class PathCandidate(BaseModel):
     id: str
     primitive: str
@@ -177,9 +142,7 @@ class PathCandidate(BaseModel):
     # requires_operator_target=True: primitive needs --target-dn at exploit time.
     requires_operator_target: bool = False
     # candidate_targets_count > 0: grouped path covers this many viable targets.
-    # Use --expand-targets on the paths command to see one row per target.
     candidate_targets_count: int = 0
-    verification_modes: list[str] = Field(default_factory=lambda: ["ldap"])
     confidence: Confidence = Confidence.medium
     # Non-empty when environment prerequisites are uncertain (e.g. KDS unknown).
     # Exploitation may fail until all environment checks are resolved.
@@ -191,17 +154,8 @@ class MapState(BaseModel):
     schema_cache: SchemaCache
     current_principal: Principal | None = None
     dmsas: list[DmsaObject] = Field(default_factory=list)
-    dmsa_read_warnings: list[str] = Field(default_factory=list)
-    unreadable_dmsa_candidates: list[str] = Field(default_factory=list)
-    dmsa_enumeration_status: CheckStatus = CheckStatus.unknown
     containers: list[ContainerObject] = Field(default_factory=list)
     targets: list[TargetObject] = Field(default_factory=list)
-    findings: list[Finding] = Field(default_factory=list)
-    ouroboros_capable: bool = False
-    ouroboros_status: str = "unknown"
-    ouroboros_blockers: list[str] = Field(default_factory=list)
-    ouroboros_warnings: list[str] = Field(default_factory=list)
-    ouroboros_required_proofs: list[str] = Field(default_factory=list)
 
     @classmethod
     def load(cls, path: str | Path) -> "MapState":
@@ -297,20 +251,12 @@ class Operation(BaseModel):
     created_dns: list[str] = Field(default_factory=list)
     maybe_created_dns: list[str] = Field(default_factory=list)
     changed_attrs: list[AttributeChange] = Field(default_factory=list)
-    requested_ticket: bool = False
-    verified: bool = False
-    verified_ldap: bool = False
-    verified_external: bool = False
-    verified_ticket: bool = False
     cleanup_available: bool = True
     cleaned_up: bool = False
     cleanup_verified: bool = False
     tool_version: str | None = None
     started_at: str = Field(default_factory=_utc_now_iso)
     updated_at: str = Field(default_factory=_utc_now_iso)
-    ldap_verified_at: str | None = None
-    external_verified_at: str | None = None
-    ticket_verified_at: str | None = None
     cleaned_up_at: str | None = None
     cleanup_verified_at: str | None = None
     scope_file_hash: str | None = None

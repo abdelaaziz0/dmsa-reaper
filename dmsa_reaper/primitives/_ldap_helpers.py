@@ -24,7 +24,7 @@ DMSA_UAC = 4096
 # 30 matches the Microsoft schema default for msDS-ManagedServiceAccount.
 DMSA_MANAGED_PASSWORD_INTERVAL = 30
 
-# msDS-DelegatedMSAState values (from Akamai BadSuccessor research + MS-ADSC).
+# msDS-DelegatedMSAState values used by the directory protocol.
 #   0 = unknown / not set
 #   1 = migration in progress
 #   2 = migration completed  ← use for BadSuccessor-style simulated migration

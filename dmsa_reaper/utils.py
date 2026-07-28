@@ -35,9 +35,3 @@ def normalize_guid(value: str | bytes | None) -> str | None:
         return maybe_b64_to_guid_le(value)
     except Exception:
         return value.lower()
-
-
-def parse_int_auto(value: str | int) -> int:
-    if isinstance(value, int):
-        return value
-    return int(value, 0)

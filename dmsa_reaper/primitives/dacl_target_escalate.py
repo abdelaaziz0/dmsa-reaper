@@ -12,7 +12,6 @@ from dmsa_reaper.ldap.dacl_editor import (
 from dmsa_reaper.ldap.modify import add_object, modify_attribute
 from dmsa_reaper.models import AttributeChange, AttributeValue, Operation, PathCandidate
 from dmsa_reaper.ops.operation_log import new_operation, save_operation
-from dmsa_reaper.ops.verify import verify_operation_ldap
 from dmsa_reaper.primitives._ldap_helpers import (
     DMSA_MANAGED_PASSWORD_INTERVAL,
     DMSA_OBJECT_CLASSES,
@@ -165,6 +164,7 @@ class DaclTargetEscalatePrimitive(Primitive):
                 build_allow_writeproperty_ace(principal_sid, state_guid_bytes),
             ]
             aces = list(dict.fromkeys(aces))
+            modified_sd = add_aces_to_sd(original_sd, aces)
             operation.metadata.setdefault("added_aces", []).extend(
                 {
                     "dn": target_dn,
@@ -174,7 +174,6 @@ class DaclTargetEscalatePrimitive(Primitive):
                 for ace in aces
             )
             save_operation(operation)
-            modified_sd = add_aces_to_sd(original_sd, aces)
             write_sd(conn, target_dn, modified_sd)
         except Exception as exc:
             operation.status = "partial-failed"
@@ -270,9 +269,6 @@ class DaclTargetEscalatePrimitive(Primitive):
         operation.status = "executed"
         save_operation(operation)
         return operation
-
-    def verify(self, operation: Operation, *, conn: "Connection | None" = None) -> bool:
-        return verify_operation_ldap(operation, conn=conn)
 
     def dry_run_steps(self, operation: Operation) -> list[str]:
         meta = operation.metadata

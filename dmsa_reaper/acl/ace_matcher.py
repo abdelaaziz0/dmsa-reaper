@@ -10,9 +10,6 @@ _ALWAYS_APPLY = frozenset({
     "AUTHENTICATED_USERS",   # alias
 })
 
-# SELF (S-1-5-10) applies when the principal IS the target object.
-_SELF_SID = "S-1-5-10"
-
 # OWNER RIGHTS SID — when present in the DACL, suppresses implicit owner grants
 # and instead the explicit ACEs for this SID govern what the object owner may do.
 OWNER_RIGHTS_SID = "S-1-3-4"
@@ -59,7 +56,6 @@ def ace_applies_to_sid(
     ace: Ace,
     principal_sids: set[str],
     *,
-    is_self: bool = False,
     is_owner: bool = False,
 ) -> bool:
     """Return True if this ACE's SID applies to the given principal SID set.
@@ -67,12 +63,9 @@ def ace_applies_to_sid(
     Args:
         ace: The ACE to evaluate.
         principal_sids: All SIDs held by the principal (direct + nested groups).
-        is_self: True when the principal IS the object being evaluated (enables SELF SID matching).
         is_owner: True when the principal is the object owner (enables OWNER RIGHTS SID matching).
     """
     if ace.sid in _ALWAYS_APPLY:
-        return True
-    if ace.sid == _SELF_SID and is_self:
         return True
     # When the principal owns the object, OWNER RIGHTS SID ACEs govern their rights.
     if ace.sid == OWNER_RIGHTS_SID and is_owner:

@@ -8,12 +8,10 @@ PRIORITY = {
     "existing-dmsa-postpatch-mutual": 1,
     "existing-dmsa-legacy-link": 2,
     "legacy-oneway-link":        3,
-    "self-write-map":            4,
-    "self-pkinit-loop":          5,
     # Indirect paths require an extra DACL-modification step before the main
     # primitive can run; ranked last since they are higher-effort and lower-confidence.
-    "dacl-container-escalate":   6,
-    "dacl-target-escalate":      7,
+    "dacl-container-escalate":   4,
+    "dacl-target-escalate":      5,
 }
 
 

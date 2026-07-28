@@ -40,9 +40,7 @@ def entry_sid(attr) -> str | None:
 
     Tries ``attr.raw_values`` first (avoids ldap3 string coercion of binary
     SID bytes).  Falls back to ``attr.value`` when raw_values is absent or
-    not a list/tuple — which makes this safe for test stubs that only expose
-    a plain ``.value`` attribute, as well as MagicMock objects that would
-    otherwise return truthy non-sequence values.
+    not a list/tuple, so callers only need the standard ``.value`` surface.
     """
     raw = None
     try:

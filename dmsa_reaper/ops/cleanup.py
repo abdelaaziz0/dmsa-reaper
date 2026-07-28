@@ -6,6 +6,8 @@ from typing import Any
 from ldap3 import BASE, Connection
 
 from dmsa_reaper.ldap.dacl_editor import (
+    _dacl_parts,
+    ace_fingerprint,
     read_sd,
     remove_aces_by_fingerprint,
     write_dacl_sd,
@@ -77,10 +79,18 @@ def _read_object_guid(conn: Connection, dn: str) -> tuple[bool, str | None]:
     return True, str(values[0]).lower() if values else None
 
 
+def _ace_fingerprint_counts(raw_sd: bytes, fingerprints: list[str]) -> dict[str, int]:
+    wanted = set(fingerprints)
+    counts = dict.fromkeys(wanted, 0)
+    for ace in _dacl_parts(raw_sd)[-1]:
+        fingerprint = ace_fingerprint(ace)
+        if fingerprint in wanted:
+            counts[fingerprint] += 1
+    return counts
+
+
 def _restore_attribute(conn: Connection, change: AttributeChange) -> dict[str, Any]:
     detail: dict[str, Any] = {"dn": change.dn, "attribute": change.attribute}
-    if change.step_status == "planned":
-        return {**detail, "status": "skipped", "reason": "write was not journaled as completed"}
     exists, actual = _read_attribute(conn, change.dn, change.attribute)
     if not exists:
         return {**detail, "status": "conflict", "reason": "object is absent"}
@@ -135,36 +145,63 @@ def _cleanup_created_object(conn: Connection, operation: Operation, dn: str) -> 
 
 def _cleanup_dacl(conn: Connection, operation: Operation, change: AttributeChange) -> dict[str, Any]:
     detail: dict[str, Any] = {"dn": change.dn, "attribute": change.attribute}
-    if change.step_status == "planned":
-        return {**detail, "status": "skipped", "reason": "DACL write was not completed"}
     records = operation.metadata.get("added_aces")
     matching = [
         item
         for item in records if isinstance(item, dict) and item.get("dn", "").lower() == change.dn.lower()
     ] if isinstance(records, list) else []
     fingerprints = [str(item["sha256"]) for item in matching if item.get("sha256")]
+    current = read_sd(conn, change.dn)
     if not fingerprints:
+        before = change.before_python() or []
+        if len(before) == 1 and current == before[0]:
+            change.step_status = "cleaned"
+            return {
+                **detail,
+                "status": "already-clean",
+                "reason": "recorded DACL is unchanged",
+            }
         return {
             **detail,
             "status": "conflict",
             "reason": "no exact added-ACE fingerprints were journaled; whole-DACL restore refused",
         }
-    current = read_sd(conn, change.dn)
-    modified, missing = remove_aces_by_fingerprint(current, fingerprints)
-    if len(missing) == len(fingerprints):
+    counts = _ace_fingerprint_counts(current, fingerprints)
+    ambiguous = sorted(fingerprint for fingerprint, count in counts.items() if count > 1)
+    if ambiguous:
+        return {
+            **detail,
+            "status": "conflict",
+            "reason": "a journaled ACE fingerprint occurs more than once; DACL left unchanged",
+            "ambiguous_fingerprints": ambiguous,
+        }
+    absent = sorted(fingerprint for fingerprint, count in counts.items() if count == 0)
+    if len(absent) == len(counts):
         change.step_status = "cleaned"
         return {**detail, "status": "already-clean", "reason": "journaled ACEs are absent"}
-    if missing:
+    if absent:
         return {
             **detail,
             "status": "conflict",
             "reason": "only some journaled ACE fingerprints are present; DACL left unchanged",
+            "missing_fingerprints": absent,
+        }
+    modified, missing = remove_aces_by_fingerprint(current, fingerprints)
+    if missing:
+        return {
+            **detail,
+            "status": "conflict",
+            "reason": "journaled ACE fingerprints could not be removed exactly; DACL left unchanged",
             "missing_fingerprints": missing,
         }
     write_dacl_sd(conn, change.dn, modified)
     verified = read_sd(conn, change.dn)
-    _, still_present = remove_aces_by_fingerprint(verified, fingerprints)
-    if len(still_present) != len(fingerprints):
+    still_present = sorted(
+        fingerprint
+        for fingerprint, count in _ace_fingerprint_counts(verified, fingerprints).items()
+        if count
+    )
+    if still_present:
         return {**detail, "status": "error", "reason": "ACE removal verification failed"}
     change.step_status = "cleaned"
     return {**detail, "status": "cleaned", "reason": "removed only journaled ACE fingerprints"}
@@ -183,7 +220,6 @@ def cleanup_operation(operation: Operation, conn: Connection | None = None) -> O
         operation.cleanup_available = False
         operation.cleaned_up_at = now
         operation.cleanup_verified_at = now
-        operation.verified = False
         operation.metadata["cleanup"] = {
             "status": "verified",
             "ok": True,
@@ -250,7 +286,6 @@ def cleanup_operation(operation: Operation, conn: Connection | None = None) -> O
         operation.cleanup_available = False
         operation.cleaned_up_at = now
         operation.cleanup_verified_at = now
-        operation.verified = False
     else:
         operation.status = "cleanup-conflict" if conflicts and not errors else "cleanup-partial"
         operation.cleanup_verified = False

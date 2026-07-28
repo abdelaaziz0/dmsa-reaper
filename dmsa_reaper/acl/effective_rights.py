@@ -11,7 +11,6 @@ def has_effective_right(
     object_type_guid: str | None = None,
     owner_sid: str | None = None,
     owner_rights_restricted: bool = False,
-    is_self: bool = False,
 ) -> bool:
     """Evaluate whether the principal holds the requested right on an AD object.
 
@@ -36,7 +35,6 @@ def has_effective_right(
         owner_sid: The object's owner SID.
         owner_rights_restricted: True when an OWNER RIGHTS ACE is present in the DACL,
             suppressing implicit owner grants.
-        is_self: True when the principal IS the target object (enables SELF SID matching).
     """
     is_owner = bool(owner_sid and owner_sid in principal_sids)
 
@@ -47,9 +45,7 @@ def has_effective_right(
             return True
 
     for ace in aces:
-        if not ace_applies_to_sid(
-            ace, principal_sids, is_self=is_self, is_owner=is_owner
-        ):
+        if not ace_applies_to_sid(ace, principal_sids, is_owner=is_owner):
             continue
         if not ace_matches_right(ace, right, object_type_guid):
             continue

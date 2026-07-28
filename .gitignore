@@ -1,27 +1,16 @@
 __pycache__/
 *.py[cod]
 *.log
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
 dist/
 build/
 .eggs/
 *.egg-info/
 *.egg
 
-# Local docs/tests output.
-docs/
-tests/
-# Test sources are repository content; only generated caches are ignored above.
-!tests/
-
 # Runtime JSON artifacts.
 state.json
 paths.json
 scope-*.json
-campaign*.json
-kerberos-*-proof.json
 
 # Operation logs written by the tool at runtime.
 .reaper/

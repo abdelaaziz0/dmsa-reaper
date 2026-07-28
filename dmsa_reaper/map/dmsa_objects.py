@@ -1,30 +1,17 @@
 from __future__ import annotations
 
-import base64
-
 from ldap3 import Connection
 
 from dmsa_reaper.acl.enrichment import compute_effective_rights
 from dmsa_reaper.acl.parser import parse_security_descriptor
 from dmsa_reaper.constants import DMSA_CLASS
 from dmsa_reaper.ldap.query import search_with_sd
-from dmsa_reaper.models import DmsaObject, Principal, Right, SchemaCache
+from dmsa_reaper.models import DmsaObject, Principal, SchemaCache
 from dmsa_reaper.map.principal import principal_sid_set
 from dmsa_reaper.ldap.sid import entry_sid
 from dmsa_reaper.utils import bytes_to_guid_le
 
 _MISSING_SD_WARNING = "nTSecurityDescriptor missing or unreadable; effective-rights result is incomplete"
-
-
-def dmsa_self_sid_set(dmsa_sid: str) -> set[str]:
-    """Return SID set for evaluating a dMSA computer account against itself.
-
-    TODO: expand this scaffold with the dMSA/computer account's nested group
-    SIDs and primaryGroupID-derived SID.  The current minimal behavior is
-    intentionally only {dmsa_sid}; it must never mix in the current operator's
-    SIDs, because operator control is modeled separately as DmsaObject.rights.
-    """
-    return {dmsa_sid}
 
 
 def enumerate_dmsas(
@@ -40,10 +27,8 @@ def enumerate_dmsas(
         "objectSid",
         "objectGUID",
         "msDS-DelegatedMSAState",
-        "msDS-GroupMSAMembership",
         "msDS-ManagedAccountPrecededByLink",
         "msDS-SupersededManagedAccountLink",
-        "msDS-KeyCredentialLink",
     ]
     entries = search_with_sd(conn, default_nc, f"(objectClass={DMSA_CLASS})", attrs, sdflags)
     if not entries:
@@ -69,11 +54,6 @@ def enumerate_dmsas(
         parse_warnings = list(psd.parse_warnings)
         if raw_sd is None:
             parse_warnings.append(_MISSING_SD_WARNING)
-        raw_gmsa = (
-            e["msDS-GroupMSAMembership"].raw_values[0]
-            if "msDS-GroupMSAMembership" in e and e["msDS-GroupMSAMembership"].raw_values
-            else None
-        )
         dn = str(e.distinguishedName.value)
         dmsa_sid = entry_sid(e.objectSid) if "objectSid" in e else None
 
@@ -91,24 +71,6 @@ def enumerate_dmsas(
         )
         if psd.parse_failed:
             operator_rights = []
-
-        # Rights the dMSA principal has on itself (acting as the dMSA computer account).
-        # Used for self-write-map and self-pkinit-loop classification.
-        self_rights: list[Right] = []
-        if dmsa_sid:
-            self_rights, _ = compute_effective_rights(
-                psd.aces,
-                dmsa_sid,
-                dmsa_self_sid_set(dmsa_sid),
-                dn,
-                psd.owner_sid,
-                attr_guids=attr_guids,
-                side="dmsa",
-                is_self=True,
-                null_dacl=psd.null_dacl,
-            )
-            if psd.parse_failed:
-                self_rights = []
 
         guid_raw = (
             e["objectGUID"].raw_values[0]
@@ -129,7 +91,6 @@ def enumerate_dmsas(
                 if "msDS-DelegatedMSAState" in e and e["msDS-DelegatedMSAState"].value is not None
                 else None
             ),
-            group_msa_membership_raw_b64=base64.b64encode(raw_gmsa).decode() if raw_gmsa else None,
             preceded_by=(
                 str(e["msDS-ManagedAccountPrecededByLink"].value)
                 if "msDS-ManagedAccountPrecededByLink" in e and e["msDS-ManagedAccountPrecededByLink"].value
@@ -140,12 +101,8 @@ def enumerate_dmsas(
                 if "msDS-SupersededManagedAccountLink" in e and e["msDS-SupersededManagedAccountLink"].value
                 else None
             ),
-            key_credential_link_present=bool(
-                "msDS-KeyCredentialLink" in e and e["msDS-KeyCredentialLink"].values
-            ),
             owner_sid=psd.owner_sid,
             rights=operator_rights,
-            self_rights=self_rights,
             parse_warnings=parse_warnings,
         ))
     return out

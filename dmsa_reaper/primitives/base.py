@@ -47,17 +47,6 @@ class Primitive(ABC):
         if scope is None:
             return warnings
 
-        # Validate that the operation log directory is writable (advisory only).
-        from pathlib import Path
-        ops_dir = Path(".reaper/operations")
-        try:
-            ops_dir.mkdir(parents=True, exist_ok=True)
-            test_file = ops_dir / ".preflight_check"
-            test_file.touch()
-            test_file.unlink()
-        except OSError as exc:
-            warnings.append(f"Operation log directory not writable: {exc}")
-
         # Check DNs that will be created (container_dn passed for primitives that need it).
         for dn in self._planned_created_dns(path, target_dn=target_dn, container_dn=container_dn):
             try:
@@ -107,14 +96,6 @@ class Primitive(ABC):
     ) -> Operation:
         raise NotImplementedError
 
-    @abstractmethod
-    def verify(self, operation: Operation, *, conn: "Connection | None" = None) -> bool:
-        raise NotImplementedError
-
     def dry_run_steps(self, operation: Operation) -> list[str]:
-        """Return a human-readable description of what execute() would do.
-
-        Default: informational path, no LDAP writes.  Override in each concrete
-        primitive that performs actual directory modifications.
-        """
-        return [f"[{self.name}] informational — no LDAP writes"]
+        """Return a human-readable description of what execute() would do."""
+        return [f"[{self.name}] no LDAP write description is available"]

@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, Any
 from dmsa_reaper.ldap.modify import modify_attribute
 from dmsa_reaper.models import AttributeChange, AttributeValue, Operation, PathCandidate
 from dmsa_reaper.ops.operation_log import new_operation, save_operation
-from dmsa_reaper.ops.verify import verify_operation_ldap
 from dmsa_reaper.primitives._ldap_helpers import (
     DMSA_STATE_COMPLETED,
     read_attribute,
@@ -54,7 +53,7 @@ def _recorded_replace(
 
 
 class ExistingDmsaLegacyLinkPrimitive(Primitive):
-    """Legacy/lab existing-dMSA link primitive.
+    """Legacy existing-dMSA link primitive for unpatched domain controllers.
 
     This only writes dMSA-side attributes. It is not sufficient for patched
     post-BadSuccessor KDC behavior unless the reciprocal target-side state is
@@ -125,9 +124,6 @@ class ExistingDmsaLegacyLinkPrimitive(Primitive):
         operation.status = "executed"
         save_operation(operation)
         return operation
-
-    def verify(self, operation: Operation, *, conn: "Connection | None" = None) -> bool:
-        return verify_operation_ldap(operation, conn=conn)
 
     def dry_run_steps(self, operation: Operation) -> list[str]:
         meta = operation.metadata
@@ -237,9 +233,6 @@ class ExistingDmsaPostPatchMutualPrimitive(Primitive):
         operation.status = "executed"
         save_operation(operation)
         return operation
-
-    def verify(self, operation: Operation, *, conn: "Connection | None" = None) -> bool:
-        return verify_operation_ldap(operation, conn=conn)
 
     def dry_run_steps(self, operation: Operation) -> list[str]:
         meta = operation.metadata

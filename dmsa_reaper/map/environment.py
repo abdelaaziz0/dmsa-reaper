@@ -21,11 +21,13 @@ def compute_dmsa_capable_status(
 
 
 def detect_server_2025_dcs(conn: Connection, default_nc: str) -> list[dict]:
-    conn.search(
+    ok = conn.search(
         search_base=default_nc,
         search_filter="(&(objectCategory=computer)(userAccountControl:1.2.840.113556.1.4.803:=8192))",
         attributes=["dNSHostName", "operatingSystem", "operatingSystemVersion"],
     )
+    if not ok:
+        raise RuntimeError("domain controller discovery failed")
     dcs: list[dict] = []
     for e in conn.entries:
         os_name = str(e.operatingSystem.value) if "operatingSystem" in e else ""
@@ -59,9 +61,12 @@ def build_environment(conn: Connection, domain: str | None, schema_cache: Schema
         server_2025_dc_status = CheckStatus.unknown
 
     kds_status = kds_root_key_status(conn, config_nc)
-    dmsa_schema_status = (
-        CheckStatus.present if schema_cache.dmsa_class_guid else CheckStatus.absent
-    )
+    if schema_cache.dmsa_class_guid_resolved:
+        dmsa_schema_status = CheckStatus.present
+    elif schema_cache.dmsa_class_guid:
+        dmsa_schema_status = CheckStatus.unknown
+    else:
+        dmsa_schema_status = CheckStatus.absent
     capable_status = compute_dmsa_capable_status(
         dmsa_schema_status,
         server_2025_dc_status,
@@ -77,9 +82,4 @@ def build_environment(conn: Connection, domain: str | None, schema_cache: Schema
         server_2025_dc_status=server_2025_dc_status,
         kds_root_key_status=kds_status,
         dmsa_capable_status=capable_status,
-        has_dmsa_schema=dmsa_schema_status == CheckStatus.present,
-        has_server_2025_dc=server_2025_dc_status == CheckStatus.present,
-        has_kds_root_key=kds_status == CheckStatus.present,
-        dmsa_capable=capable_status == CheckStatus.present,
-        dcs=dcs,
     )
