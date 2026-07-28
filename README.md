@@ -1,13 +1,7 @@
 # dMSA-Reaper
 
 dMSA-Reaper maps and exploits BadSuccessor paths in Windows Server 2025
-Active Directory. Its operator flow is deliberately small:
-
-```text
-map -> paths -> exploit -> tgt/ticket -> cleanup
-```
-
-Use it only in an Active Directory environment you are authorized to test.
+Active Directory.
 
 ## Install
 
