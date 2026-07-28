@@ -26,7 +26,9 @@ class LdapBindError(RuntimeError):
 
 
 def build_server(config: LdapAuthConfig) -> Server:
-    host = config.dc_host or config.dc_ip or config.domain
+    # Keep --dc-ip as the network endpoint when both values are supplied.
+    # --dc-host remains the Kerberos service hostname below.
+    host = config.dc_ip or config.dc_host or config.domain
     port = config.port or (636 if config.use_ldaps else 389)
     tls = Tls(validate=ssl.CERT_REQUIRED if config.tls_validate else ssl.CERT_NONE)
 
@@ -61,6 +63,7 @@ def bind(config: LdapAuthConfig) -> Connection:
             server,
             authentication=SASL,
             sasl_mechanism=KERBEROS,
+            sasl_credentials=(config.dc_host,) if config.dc_host else None,
             **common_kwargs,
         )
     elif config.username:

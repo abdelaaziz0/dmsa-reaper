@@ -27,8 +27,30 @@ def _utc_now_iso() -> str:
     )
 
 
-def _value_keys(values: list[Any] | None) -> list[tuple[str, str]]:
-    return sorted(AttributeValue.from_python(value).comparison_key() for value in (values or []))
+_INTEGER_LDAP_ATTRIBUTES = frozenset({
+    "msds-delegatedmsastate",
+    "msds-supersededserviceaccountstate",
+})
+
+
+def _value_keys(
+    values: list[Any] | None,
+    *,
+    attribute: str,
+) -> list[tuple[str, str]]:
+    keys: list[tuple[str, str]] = []
+    integer_attribute = attribute.casefold() in _INTEGER_LDAP_ATTRIBUTES
+    for value in values or []:
+        typed = AttributeValue.from_python(value)
+        # ldap3 is intentionally used without a loaded schema, so AD integer
+        # attributes are returned as decimal strings even when we wrote ints.
+        if integer_attribute and typed.type == "str":
+            try:
+                typed = AttributeValue(type="int", value=int(str(typed.value), 10))
+            except ValueError:
+                pass
+        keys.append(typed.comparison_key())
+    return sorted(keys)
 
 
 def _read_attribute(conn: Connection, dn: str, attribute: str) -> tuple[bool, list[Any]]:
@@ -96,10 +118,16 @@ def _restore_attribute(conn: Connection, change: AttributeChange) -> dict[str, A
         return {**detail, "status": "conflict", "reason": "object is absent"}
     before = change.before_python() or []
     after = change.after_python() or []
-    if _value_keys(actual) == _value_keys(before):
+    if _value_keys(actual, attribute=change.attribute) == _value_keys(
+        before,
+        attribute=change.attribute,
+    ):
         change.step_status = "cleaned"
         return {**detail, "status": "already-clean", "reason": "recorded before-value is present"}
-    if _value_keys(actual) != _value_keys(after):
+    if _value_keys(actual, attribute=change.attribute) != _value_keys(
+        after,
+        attribute=change.attribute,
+    ):
         return {
             **detail,
             "status": "conflict",
@@ -110,7 +138,10 @@ def _restore_attribute(conn: Connection, change: AttributeChange) -> dict[str, A
     else:
         modify_attribute(conn, change.dn, change.attribute, before, mode="replace")
     _, verified = _read_attribute(conn, change.dn, change.attribute)
-    if _value_keys(verified) != _value_keys(before):
+    if _value_keys(verified, attribute=change.attribute) != _value_keys(
+        before,
+        attribute=change.attribute,
+    ):
         return {**detail, "status": "error", "reason": "restoration verification failed"}
     change.step_status = "cleaned"
     return {**detail, "status": "cleaned", "reason": "restored recorded before-value"}
@@ -238,33 +269,52 @@ def cleanup_operation(operation: Operation, conn: Connection | None = None) -> O
 
     normal_changes = [c for c in operation.changed_attrs if c.attribute != "nTSecurityDescriptor"]
     dacl_changes = [c for c in operation.changed_attrs if c.attribute == "nTSecurityDescriptor"]
+    unwind_blocked = False
+
+    # Unwind in strict reverse-operation order.  In DACL escalation primitives
+    # the injected ACE is the first write and grants the access needed by later
+    # attribute writes, so it must remain in place if any dependent cleanup
+    # step fails.  Retrying can then resume safely from the journal.
     for change in reversed(normal_changes):
         try:
-            attribute_details.append(_restore_attribute(conn, change))
+            detail = _restore_attribute(conn, change)
         except Exception as exc:
-            attribute_details.append({
+            detail = {
                 "dn": change.dn,
                 "attribute": change.attribute,
                 "status": "error",
                 "reason": str(exc),
-            })
+            }
+        attribute_details.append(detail)
+        if detail["status"] in {"conflict", "error"}:
+            unwind_blocked = True
+            break
 
-    for dn in reversed(list(dict.fromkeys(operation.created_dns + operation.maybe_created_dns))):
-        try:
-            object_details.append(_cleanup_created_object(conn, operation, dn))
-        except Exception as exc:
-            object_details.append({"dn": dn, "status": "error", "reason": str(exc)})
+    if not unwind_blocked:
+        for dn in reversed(list(dict.fromkeys(operation.created_dns + operation.maybe_created_dns))):
+            try:
+                detail = _cleanup_created_object(conn, operation, dn)
+            except Exception as exc:
+                detail = {"dn": dn, "status": "error", "reason": str(exc)}
+            object_details.append(detail)
+            if detail["status"] in {"conflict", "error"}:
+                unwind_blocked = True
+                break
 
-    for change in reversed(dacl_changes):
-        try:
-            attribute_details.append(_cleanup_dacl(conn, operation, change))
-        except Exception as exc:
-            attribute_details.append({
-                "dn": change.dn,
-                "attribute": change.attribute,
-                "status": "error",
-                "reason": str(exc),
-            })
+    if not unwind_blocked:
+        for change in reversed(dacl_changes):
+            try:
+                detail = _cleanup_dacl(conn, operation, change)
+            except Exception as exc:
+                detail = {
+                    "dn": change.dn,
+                    "attribute": change.attribute,
+                    "status": "error",
+                    "reason": str(exc),
+                }
+            attribute_details.append(detail)
+            if detail["status"] in {"conflict", "error"}:
+                break
 
     all_details = attribute_details + object_details
     conflicts = [d for d in all_details if d["status"] == "conflict"]

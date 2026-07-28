@@ -216,7 +216,6 @@ def new_operation(
     primitive: str,
     path_id: str | None = None,
     metadata: dict | None = None,
-    scope_file_hash: str | None = None,
     ops_dir: str | Path | None = None,
 ) -> Operation:
     op = Operation(
@@ -225,7 +224,6 @@ def new_operation(
         path_id=path_id,
         metadata=metadata or {},
         tool_version=__version__,
-        scope_file_hash=scope_file_hash,
     )
     save_operation(op, ops_dir)
     return op

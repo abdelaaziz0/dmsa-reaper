@@ -7,6 +7,7 @@ import re
 import shutil
 import shlex
 import subprocess
+import sys
 import tempfile
 import time
 from datetime import datetime, timezone
@@ -100,8 +101,48 @@ def _operation_dmsa_sam(operation: Operation) -> str:
     )
 
 
+def _usable_executable(path: Path) -> str | None:
+    """Return an absolute executable path, or None for an unusable candidate."""
+    try:
+        candidate = path.expanduser().absolute()
+        if not candidate.is_file():
+            return None
+        if os.name != "nt" and not os.access(candidate, os.X_OK):
+            return None
+    except OSError:
+        return None
+    return str(candidate)
+
+
+def _explicit_executable(value: str | None) -> str | None:
+    if not value:
+        return None
+    is_path = (
+        os.path.isabs(value)
+        or os.sep in value
+        or (os.altsep is not None and os.altsep in value)
+    )
+    if is_path:
+        return _usable_executable(Path(value))
+    return shutil.which(value)
+
+
 def _getst_executable(explicit: str | None) -> str | None:
-    return explicit or shutil.which("getST.py") or shutil.which("impacket-getST")
+    # A console-script installation can run dmsa-reaper from a virtualenv while
+    # the shell PATH still resolves an unrelated system Impacket. Keep the two
+    # tools in the same Python environment whenever that environment provides
+    # getST.
+    active_bin = Path(os.path.abspath(sys.executable)).parent
+    for name in ("getST.py", "impacket-getST"):
+        sibling = _usable_executable(active_bin / name)
+        if sibling:
+            return sibling
+
+    override = _explicit_executable(explicit)
+    if override:
+        return override
+
+    return shutil.which("getST.py") or shutil.which("impacket-getST")
 
 
 def _write_operation_snapshot(run_dir: Path, operation: Operation) -> None:
@@ -142,7 +183,7 @@ def _service_handoff(service: str) -> tuple[str, str]:
 
 def _failure_class(stdout: str, stderr: str, returncode: int) -> str:
     combined = f"{stdout}\n{stderr}"
-    match = re.search(r"KDC_ERR_[A-Z_]+", combined)
+    match = re.search(r"\b(?:KDC|KRB)_ERR_[A-Z0-9_]+", combined)
     if match:
         return match.group(0)
     lowered = combined.lower()
@@ -153,6 +194,49 @@ def _failure_class(stdout: str, stderr: str, returncode: int) -> str:
     if returncode:
         return f"impacket-exit-{returncode}"
     return "no-valid-ccache"
+
+
+def _write_getst_failure(
+    run_dir: Path,
+    *,
+    stage: str,
+    request: subprocess.CompletedProcess[str],
+) -> Path | None:
+    """Keep Impacket's exact failure output in the protected run directory."""
+    path = run_dir / f"getst-{stage}-failure.log"
+    body = (
+        f"returncode: {request.returncode}\n"
+        "\n[stdout]\n"
+        f"{request.stdout or ''}"
+        "\n[stderr]\n"
+        f"{request.stderr or ''}"
+    )
+    try:
+        path.write_text(body, encoding="utf-8")
+        os.chmod(path, 0o600)
+    except OSError:
+        return None
+    return path
+
+
+def _diagnostic_summary(stdout: str, stderr: str) -> str:
+    """Return a bounded, key-redacted failure summary for console metadata."""
+    combined = f"{stdout}\n{stderr}"
+    lines = [line.strip() for line in combined.splitlines() if line.strip()]
+    noteworthy = [
+        line
+        for line in lines
+        if line.startswith(("[-]", "[!]", "Kerberos SessionError:", "Traceback"))
+        or "Error" in line
+        or "error" in line
+        or "cannot unpack" in line
+    ]
+    selected = noteworthy[-4:] if noteworthy else lines[-4:]
+    summary = " | ".join(selected)
+    # getST normally does not run in debug mode here, but redact any long
+    # hexadecimal key material defensively before recording the CLI reason.
+    summary = re.sub(r"(?i)\b[0-9a-f]{32,}\b", "<redacted-hex>", summary)
+    return summary[:800]
 
 
 def _run_getst(
@@ -240,7 +324,19 @@ def acquire_dmsa_tgt(
             )
         except TicketAcquisitionError as exc:
             failure = _failure_class(request.stdout, request.stderr, request.returncode)
-            raise TicketAcquisitionError(f"dMSA TGT acquisition failed ({failure}): {exc}") from exc
+            diagnostic = _write_getst_failure(
+                run_dir,
+                stage="tgt",
+                request=request,
+            )
+            detail = _diagnostic_summary(request.stdout, request.stderr)
+            message = f"dMSA TGT acquisition failed ({failure})"
+            if detail:
+                message += f": {detail}"
+            message += f"; artifact check: {exc}"
+            if diagnostic:
+                message += f"; diagnostic: {diagnostic}"
+            raise TicketAcquisitionError(message) from exc
 
         tgt_path = run_dir / "created-dmsa.ccache"
         os.replace(produced_tgt, tgt_path)
@@ -315,9 +411,19 @@ def acquire_dmsa_ticket(
             )
         except TicketAcquisitionError as exc:
             failure = _failure_class(second.stdout, second.stderr, second.returncode)
-            raise TicketAcquisitionError(
-                f"service-ticket request failed ({failure}): {exc}"
-            ) from exc
+            diagnostic = _write_getst_failure(
+                run_dir,
+                stage=f"service-{artifact_key}",
+                request=second,
+            )
+            detail = _diagnostic_summary(second.stdout, second.stderr)
+            message = f"service-ticket request failed ({failure})"
+            if detail:
+                message += f": {detail}"
+            message += f"; artifact check: {exc}"
+            if diagnostic:
+                message += f"; diagnostic: {diagnostic}"
+            raise TicketAcquisitionError(message) from exc
         service_path = run_dir / f"service-{artifact_key}.ccache"
         os.replace(produced_service, service_path)
         os.chmod(service_path, 0o600)
