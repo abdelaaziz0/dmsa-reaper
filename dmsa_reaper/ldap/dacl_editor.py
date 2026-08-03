@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 # Access mask bits
 CREATE_CHILD = 0x00000001
 WRITE_PROPERTY = 0x00000020
+GENERIC_ALL = 0x10000000
 
 # ACE type codes
 ACE_TYPE_ALLOW = 0x00          # ACCESS_ALLOWED_ACE_TYPE
@@ -117,6 +118,16 @@ def build_allow_writeproperty_ace(
     else:
         inner = struct.pack("<I", WRITE_PROPERTY) + sid_data
         return _build_ace_bytes(ACE_TYPE_ALLOW, 0, inner)
+
+
+def build_allow_genericall_ace(principal_sid: str) -> bytes:
+    """Build a standard explicit allow ACE granting GenericAll."""
+    sid_data = _build_sid_bytes(principal_sid)
+    return _build_ace_bytes(
+        ACE_TYPE_ALLOW,
+        0,
+        struct.pack("<I", GENERIC_ALL) + sid_data,
+    )
 
 
 def _split_aces(ace_data: bytes, ace_count: int) -> list[bytes]:

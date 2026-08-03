@@ -98,6 +98,9 @@ class DmsaObject(BaseModel):
     owner_sid: str | None = None
     rights: list[Right] = Field(default_factory=list)
     parse_warnings: list[str] = Field(default_factory=list)
+    key_credential_count: int = 0
+    group_msa_membership_sids: list[str] = Field(default_factory=list)
+    ouroboros_self_authorized: bool = False
 
 
 class ContainerObject(BaseModel):

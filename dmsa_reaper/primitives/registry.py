@@ -8,11 +8,13 @@ from dmsa_reaper.primitives.existing_dmsa_control import (
     ExistingDmsaPostPatchMutualPrimitive,
 )
 from dmsa_reaper.primitives.legacy_oneway_link import LegacyOneWayLinkPrimitive
+from dmsa_reaper.primitives.ouroboros import OuroborosPrimitive
 from dmsa_reaper.primitives.postpatch_mutual_pair import PostPatchMutualPairPrimitive
 
 
 def get_primitives() -> dict[str, Primitive]:
     primitives: list[Primitive] = [
+        OuroborosPrimitive(),
         PostPatchMutualPairPrimitive(),
         ExistingDmsaPostPatchMutualPrimitive(),
         ExistingDmsaLegacyLinkPrimitive(),

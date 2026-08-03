@@ -13,6 +13,22 @@ from dmsa_reaper.utils import bytes_to_guid_le
 
 _MISSING_SD_WARNING = "nTSecurityDescriptor missing or unreadable; effective-rights result is incomplete"
 
+_EXPANDED_GENERIC_ALL_RIGHTS = frozenset({
+    "CreateChild",
+    "DeleteChild",
+    "ListContents",
+    "SelfWrite",
+    "ReadProperty",
+    "WriteProperty",
+    "DeleteTree",
+    "ListObject",
+    "ControlAccess",
+    "Delete",
+    "ReadControl",
+    "WriteDACL",
+    "WriteOwner",
+})
+
 
 def enumerate_dmsas(
     conn: Connection,
@@ -29,6 +45,8 @@ def enumerate_dmsas(
         "msDS-DelegatedMSAState",
         "msDS-ManagedAccountPrecededByLink",
         "msDS-SupersededManagedAccountLink",
+        "msDS-KeyCredentialLink",
+        "msDS-GroupMSAMembership",
     ]
     entries = search_with_sd(conn, default_nc, f"(objectClass={DMSA_CLASS})", attrs, sdflags)
     if not entries:
@@ -56,6 +74,42 @@ def enumerate_dmsas(
             parse_warnings.append(_MISSING_SD_WARNING)
         dn = str(e.distinguishedName.value)
         dmsa_sid = entry_sid(e.objectSid) if "objectSid" in e else None
+
+        key_credential_values = (
+            e["msDS-KeyCredentialLink"].raw_values or []
+            if "msDS-KeyCredentialLink" in e
+            else []
+        )
+        membership_values = (
+            e["msDS-GroupMSAMembership"].raw_values or []
+            if "msDS-GroupMSAMembership" in e
+            else []
+        )
+        membership_sids: list[str] = []
+        self_authorized = False
+        if membership_values:
+            membership_raw = membership_values[0]
+            membership_bytes = (
+                membership_raw.encode("latin-1")
+                if isinstance(membership_raw, str)
+                else bytes(membership_raw)
+            )
+            membership_sd = parse_security_descriptor(membership_bytes)
+            if membership_sd.parse_warnings:
+                parse_warnings.extend(
+                    f"msDS-GroupMSAMembership: {warning}"
+                    for warning in membership_sd.parse_warnings
+                )
+            membership_sids = sorted({ace.sid for ace in membership_sd.aces})
+            self_authorized = bool(
+                dmsa_sid
+                and any(
+                    ace.ace_type == "allow"
+                    and ace.sid == dmsa_sid
+                    and _EXPANDED_GENERIC_ALL_RIGHTS.issubset(ace.rights)
+                    for ace in membership_sd.aces
+                )
+            )
 
         # Rights the current operator has on this dMSA.
         operator_rights, _ = compute_effective_rights(
@@ -104,5 +158,8 @@ def enumerate_dmsas(
             owner_sid=psd.owner_sid,
             rights=operator_rights,
             parse_warnings=parse_warnings,
+            key_credential_count=len(key_credential_values),
+            group_msa_membership_sids=membership_sids,
+            ouroboros_self_authorized=self_authorized,
         ))
     return out
