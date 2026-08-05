@@ -3,8 +3,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 import ssl
 
-from ldap3 import NONE, NTLM, SASL, KERBEROS, Connection, Server, Tls
-
+from ldap3 import (
+    NONE,
+    NTLM,
+    SASL,
+    KERBEROS,
+    ENCRYPT,
+    Connection,
+    Server,
+    Tls,
+)
 
 @dataclass
 class LdapAuthConfig:
@@ -50,6 +58,7 @@ def build_server(config: LdapAuthConfig) -> Server:
 def bind(config: LdapAuthConfig) -> Connection:
     if config.use_ldaps and config.start_tls:
         raise LdapBindError("LDAPS and STARTTLS are mutually exclusive")
+
     server = build_server(config)
 
     common_kwargs = {
@@ -58,16 +67,24 @@ def bind(config: LdapAuthConfig) -> Connection:
         "raise_exceptions": False,
     }
 
+    # LDAP signing/sealing when TLS is not active.
+    security_kwargs = {}
+
+    if not config.use_ldaps and not config.start_tls:
+        security_kwargs["session_security"] = ENCRYPT
+
     if config.kerberos:
         conn = Connection(
             server,
             authentication=SASL,
             sasl_mechanism=KERBEROS,
-            sasl_credentials=(config.dc_host,) if config.dc_host else None,
+            **security_kwargs,
             **common_kwargs,
         )
+
     elif config.username:
         user = config.username
+
         if "\\" not in user and "@" not in user and config.domain:
             user = f"{config.domain}\\{user}"
 
@@ -76,14 +93,22 @@ def bind(config: LdapAuthConfig) -> Connection:
             user=user,
             password=config.password or "",
             authentication=NTLM,
+            **security_kwargs,
             **common_kwargs,
         )
+
     else:
-        conn = Connection(server, **common_kwargs)
+        conn = Connection(
+            server,
+            **common_kwargs,
+        )
 
     if config.start_tls:
         if not conn.open():
-            raise LdapBindError(f"LDAP connection failed before STARTTLS: {conn.result}")
+            raise LdapBindError(
+                f"LDAP connection failed before STARTTLS: {conn.result}"
+            )
+
         if not conn.start_tls():
             raise LdapBindError(f"LDAP STARTTLS failed: {conn.result}")
 
