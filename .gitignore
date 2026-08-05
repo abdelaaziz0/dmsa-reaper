@@ -28,3 +28,8 @@ venv/
 *.swp
 .codex/
 .agents/
+
+# tickets and configs
+*.ccache
+*.txt
+*.conf

