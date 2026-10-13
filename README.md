@@ -1,16 +1,3 @@
-<p align="center">
-  <img src="utils/logo.png" alt="dMSA-Reaper" width="360">
-</p>
-
-```
-       ____  ________ ___       ____
-  ____/ /  |/  / ___//   |     / __ \___  ____ _____  ___  _____
- / __  / /|_/ /\__ \/ /| |    / /_/ / _ \/ __ `/ __ \/ _ \/ ___/
-/ /_/ / /  / /___/ / ___ |   / _, _/  __/ /_/ / /_/ /  __/ /
-\__,_/_/  /_//____/_/  |_|  /_/ |_|\___/\__,_/ .___/\___/_/
-                                            /_/
-```
-
 # dMSA-Reaper
 
 dMSA-Reaper maps and exploits BadSuccessor and dMSA Ouroboros paths in
